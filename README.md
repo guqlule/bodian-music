@@ -1,6 +1,6 @@
 # 波点音乐
 
-一款基于 Flutter 的 Android 音乐播放器，仿 lx-music-mobile 风格。
+一款基于 Flutter 的 Android 音乐播放器，仿 lx-music-mobile 风格。支持手机使用，也可通过 joviincar 投屏到车机使用。
 
 ## 功能特性
 
@@ -15,6 +15,10 @@
 - 睡眠定时
 - 蓝牙歌词显示
 - 隐私政策页面
+
+## 车机使用
+
+支持通过 **joviincar** 投屏到车机，手机端播放音乐，车机端同步显示歌词和操控。
 
 ## 项目结构
 
@@ -52,6 +56,16 @@ flutter run
 # 构建 Release APK
 flutter build apk --release --split-per-abi
 ```
+
+## 下载安装
+
+前往 [Releases](https://github.com/guqlule/bodian-music/releases) 下载最新 APK：
+
+| 架构 | 说明 |
+|------|------|
+| armeabi-v7a | 大部分手机 |
+| arm64-v8a | 新款手机（推荐） |
+| x86_64 | 模拟器/平板 |
 
 ## 主要依赖
 
