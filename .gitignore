@@ -49,3 +49,5 @@ app.*.map.json
 /android/build/
 /android/.gradle/
 /opencode.json
+build_log.txt
+test_*.json
