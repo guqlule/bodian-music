@@ -86,8 +86,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final hasLine = line != null && line.isNotEmpty;
       final cur = _currentItem!;
       _lyricSeq++;
-      final suffix = ' \u200B$_lyricSeq';
-      final title = hasLine ? '$line$suffix' : cur.title;
+      final title = hasLine ? line : cur.title;
       final artist = hasLine
           ? '${cur.displayTitle ?? ''} · ${cur.artist ?? ''}'
           : (cur.artist ?? '');
