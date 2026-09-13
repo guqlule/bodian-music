@@ -90,13 +90,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final updatedItem = MediaItem(
         // mediaId 加入序号 → 车机 AVRCP 认为是新 metadata → 强制重新读取
         id: '$_baseMediaId#$_lyricSeq',
-        // title/artist 保持原值，避免通知栏歌词滚动
-        title: cur.title,
+        // title 放歌词 → 灵动岛/车机 AVRCP 读取
+        title: hasLine ? line : cur.title,
+        // artist 保持原歌手名，不再拼接歌名（避免第二行滚动）
         artist: cur.artist,
         album: cur.album ?? '',
         artUri: cur.artUri,
         duration: cur.duration,
-        // displayTitle/displaySubtitle/displayDescription 供蓝牙 AVRCP 读取
         displayTitle: hasLine ? line : (cur.displayTitle ?? cur.title),
         displaySubtitle: cur.artist ?? '',
         displayDescription: hasLine ? line : (cur.album ?? ''),
