@@ -137,7 +137,7 @@ class PlayerService {
       _durationController.add(duration);
       // 本地歌曲：首次获取到真实时长时更新本地库
       final music = _currentMusicController.value;
-      if (music != null && music.source == 'local' && duration != null && duration.inMilliseconds > 0) {
+      if (music != null && (music.source == 'local' || music.source == 'webdav') && duration != null && duration.inMilliseconds > 0) {
         _localMusicService.updateSongDuration(music.id, duration.inMilliseconds);
       }
     }));
@@ -664,7 +664,7 @@ class PlayerService {
   /// 走并行通道（临时 JS 运行时），不与用户切歌争抢 JS 锁
   void _prefetchNextUrl(MusicInfo current) {
     final next = _getNextPlayMusicInfo(isManualToggle: false);
-    if (next == null || next.source == 'local') return;
+    if (next == null || next.source == 'local' || next.source == 'webdav') return;
     if (_urlCache.containsKey(next.id)) return;
     // 延迟2秒执行，避开主播放请求的高峰
     Future.delayed(const Duration(seconds: 2), () async {
@@ -716,8 +716,8 @@ class PlayerService {
     try {
       String? url;
 
-      // 本地音乐直接使用本地路径
-      if (music.source == 'local') {
+      // 本地音乐/WebDAV 直接使用本地路径或 HTTP URL
+      if (music.source == 'local' || music.source == 'webdav') {
         url = music.songUrl;
       } else {
         // 始终并行获取歌词（不依赖URL缓存）

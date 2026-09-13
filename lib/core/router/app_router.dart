@@ -17,6 +17,8 @@ import '../../screens/user_api/user_api_screen.dart';
 import '../../screens/sleep_timer/sleep_timer_screen.dart';
 import '../../screens/play_history/play_history_screen.dart';
 import '../../screens/leaderboard/leaderboard_screen.dart';
+import '../../screens/webdav/webdav_music_screen.dart';
+import '../../screens/webdav/webdav_settings_screen.dart';
 
 /// 全局路由状态：非首页时为 true（显示迷你播放器）
 final ValueNotifier<bool> subPageNotifier = ValueNotifier<bool>(false);
@@ -119,6 +121,14 @@ class AppRouter {
           GoRoute(
             path: 'leaderboard',
             builder: (context, state) => const LeaderboardScreen(),
+          ),
+          GoRoute(
+            path: 'webdav',
+            builder: (context, state) => const WebdavMusicScreen(),
+          ),
+          GoRoute(
+            path: 'webdav-settings',
+            builder: (context, state) => const WebdavSettingsScreen(),
           ),
         ],
       ),

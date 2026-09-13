@@ -104,6 +104,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 children: [
                   _drawerItem(Icons.search_rounded, '搜索', () => context.push('/search')),
                   _drawerItem(Icons.folder_open_rounded, '本地音乐', () => context.push('/local-music')),
+                  _drawerItem(Icons.cloud_rounded, 'WebDAV 音乐库', () => context.push('/webdav')),
                   _drawerItem(Icons.equalizer_rounded, '均衡器', () => context.push('/equalizer')),
                   _drawerItem(Icons.library_music_rounded, '我的歌单', () => context.push('/my-list')),
                   _drawerItem(Icons.favorite_rounded, '我喜欢', () => context.push('/favorites')),
