@@ -1,0 +1,10 @@
+-keep class com.lxmusic.lx_music_flutter.** { *; }
+-keep class io.flutter.** { *; }
+-keep class io.flutter.plugins.** { *; }
+-keep class com.ryanheise.audioservice.** { *; }
+-keep class com.ryanheise.audiosession.** { *; }
+-dontwarn com.google.android.play.core.splitinstall.**
+-dontwarn com.google.android.play.core.tasks.**
+-dontwarn com.google.android.play.core.splitcompat.**
+-dontwarn javax.annotation.**
+-dontwarn sun.misc.Unsafe
