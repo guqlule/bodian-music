@@ -81,12 +81,41 @@ lib/
 - **数据库**: Hive
 - **WebDAV**: webdav_client
 
-## 致谢
+## 版权声明
 
-- [lx-music-mobile](https://github.com/lyswhut/lx-music-mobile) - 原版参考
-- [flutter_audio_service](https://github.com/ryanheise/audio_service) - 音频后台服务
-- [just_audio](https://github.com/ryanheise/just_audio) - 音频播放引擎
+本项目基于 [lx-music-mobile](https://github.com/lyswhut/lx-music-mobile) 开源项目开发，原项目采用 Apache-2.0 许可证。
+
+本项目保留原项目的相关权利，并遵循原项目的开源协议要求。
+
+### 原项目引用
+
+- **lx-music-mobile** © [lyswhut](https://github.com/lyswhut) - Apache-2.0 License
+  - 项目地址：https://github.com/lyswhut/lx-music-mobile
+  - 本项目的 UI 设计、功能逻辑参考了原项目的实现
+
+### 本项目依赖
+
+- **audio_service** © Ryan Heise - MIT License
+- **just_audio** © Ryan Heise - MIT License
+- **flutter_riverpod** © Remi Rousselet - MIT License
+- **go_router** © Flutter Team - BSD-3-Clause License
 
 ## 许可证
 
-MIT License
+本项目采用 Apache-2.0 许可证，与原项目保持一致。
+
+```
+Copyright 2026 guqlule
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
