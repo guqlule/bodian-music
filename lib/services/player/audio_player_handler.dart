@@ -86,21 +86,19 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final hasLine = line != null && line.isNotEmpty;
       final cur = _currentItem!;
       _lyricSeq++;
-      final title = hasLine ? line : cur.title;
-      final artist = hasLine
-          ? '${cur.displayTitle ?? ''} · ${cur.artist ?? ''}'
-          : (cur.artist ?? '');
 
       final updatedItem = MediaItem(
         // mediaId 加入序号 → 车机 AVRCP 认为是新 metadata → 强制重新读取
         id: '$_baseMediaId#$_lyricSeq',
-        title: title,
-        artist: artist,
+        // title/artist 保持原值，避免通知栏歌词滚动
+        title: cur.title,
+        artist: cur.artist,
         album: cur.album ?? '',
         artUri: cur.artUri,
         duration: cur.duration,
+        // displayTitle/displaySubtitle/displayDescription 供蓝牙 AVRCP 读取
         displayTitle: hasLine ? line : (cur.displayTitle ?? cur.title),
-        displaySubtitle: artist,
+        displaySubtitle: cur.artist ?? '',
         displayDescription: hasLine ? line : (cur.album ?? ''),
         extras: {
           'lyric': line ?? '',
