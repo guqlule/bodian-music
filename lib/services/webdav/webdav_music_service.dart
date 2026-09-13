@@ -4,14 +4,11 @@ import '../../models/music_model.dart';
 import 'webdav_service.dart';
 
 /// 支持的音频文件扩展名
-const Set<String> _audioExtensions = {
+const Set<String> audioExtensions = {
   'mp3', 'flac', 'wav', 'aac', 'm4a', 'ogg', 'ape', 'wma', 'opus', 'alac', 'aiff', 'ac3', 'dts',
 };
 
 /// WebDAV 音乐扫描/管理
-/// - 连接 WebDAV 服务器，PROPFIND 扫描远程目录
-/// - 解析音频文件，构建 MusicInfo
-/// - 持久化到 Hive（重启不丢）
 class WebdavMusicService {
   static final WebdavMusicService _instance = WebdavMusicService._internal();
   factory WebdavMusicService() => _instance;
@@ -24,11 +21,13 @@ class WebdavMusicService {
   bool _isScanning = false;
   String? _scanProgress;
   int _totalFound = 0;
+  int _scannedDirs = 0;
 
   List<MusicInfo> get songs => List.unmodifiable(_songs);
   bool get isScanning => _isScanning;
   String? get scanProgress => _scanProgress;
   int get totalFound => _totalFound;
+  int get scannedDirs => _scannedDirs;
 
   Future<Box> get _box => Hive.openBox('webdav_music');
 
@@ -42,7 +41,11 @@ class WebdavMusicService {
       if (configRaw is Map) {
         final config = WebdavConfig.fromJson(Map<String, dynamic>.from(configRaw));
         if (config.host.isNotEmpty) {
-          await WebdavService().connect(config);
+          try {
+            await WebdavService().connect(config);
+          } catch (_) {
+            // 连接失败不影响恢复歌曲列表
+          }
         }
       }
 
@@ -80,26 +83,26 @@ class WebdavMusicService {
   Future<int> scanRemote() async {
     final webdav = WebdavService();
     if (!webdav.isConnected) {
-      throw Exception('WebDAV 未连接');
+      throw WebdavException('WebDAV 未连接');
     }
 
     _isScanning = true;
-    _scanProgress = '扫描中...';
+    _scanProgress = '准备扫描...';
     _totalFound = 0;
+    _scannedDirs = 0;
 
     try {
       final config = webdav.config!;
       final found = <MusicInfo>[];
-      await _scanDirectory(webdav, config.remotePath, found);
+      await _scanDirectory(webdav, config.remotePath, found, 0);
 
       _songs = found;
       _totalFound = found.length;
       _scanProgress = null;
       _isScanning = false;
 
-      // 持久化
       await _saveLibrary();
-      logDebug('[WebdavMusic] 扫描完成，共 ${found.length} 首歌曲');
+      logDebug('[WebdavMusic] 扫描完成，共 ${found.length} 首歌曲，${_scannedDirs} 个目录');
       return found.length;
     } catch (e) {
       _isScanning = false;
@@ -109,10 +112,14 @@ class WebdavMusicService {
     }
   }
 
-  Future<void> _scanDirectory(WebdavService webdav, String path, List<MusicInfo> found) async {
+  Future<void> _scanDirectory(WebdavService webdav, String path, List<MusicInfo> found, int depth) async {
+    // 防止目录嵌套过深
+    if (depth > 10) return;
+
     try {
       final entries = await webdav.readDir(path);
       _scanProgress = path;
+      _scannedDirs++;
 
       for (final entry in entries) {
         final name = entry.name ?? '';
@@ -122,26 +129,29 @@ class WebdavMusicService {
         final fullPath = '$path/$name';
 
         if (isDir) {
-          // 递归扫描子目录
-          await _scanDirectory(webdav, fullPath, found);
+          await _scanDirectory(webdav, fullPath, found, depth + 1);
         } else {
-          // 检查是否为音频文件
           final ext = _getExtension(name).toLowerCase();
-          if (_audioExtensions.contains(ext)) {
+          if (audioExtensions.contains(ext)) {
             final songUrl = webdav.buildFileUrl(fullPath);
             final music = _buildMusicInfo(name, songUrl, fullPath);
-            found.add(music);
-            _totalFound = found.length;
+            // 去重（按 songUrl）
+            if (!found.any((s) => s.songUrl == songUrl)) {
+              found.add(music);
+              _totalFound = found.length;
+            }
           }
         }
       }
+    } on WebdavException catch (e) {
+      logDebug('[WebdavMusic] 跳过目录 $path: ${e.message}');
+      // 单个目录失败不中断整个扫描
     } catch (e) {
       logDebug('[WebdavMusic] 扫描目录失败: $path, $e');
     }
   }
 
   MusicInfo _buildMusicInfo(String fileName, String songUrl, String remotePath) {
-    // 尝试解析 "歌手 - 歌名" 格式
     String name = fileName;
     String singer = '';
     String album = '';
@@ -150,6 +160,7 @@ class WebdavMusicService {
         ? fileName.substring(0, fileName.lastIndexOf('.'))
         : fileName;
 
+    // 解析 "歌手 - 歌名" 格式
     if (nameWithoutExt.contains(' - ')) {
       final parts = nameWithoutExt.split(' - ');
       if (parts.length >= 2) {
@@ -161,11 +172,12 @@ class WebdavMusicService {
     // 用远程路径的父目录名作为专辑名
     final lastSlash = remotePath.lastIndexOf('/');
     if (lastSlash > 0) {
-      album = remotePath.substring(0, lastSlash).split('/').last;
+      final dirName = remotePath.substring(0, lastSlash).split('/').last;
+      if (dirName.isNotEmpty) album = dirName;
     }
 
     return MusicInfo(
-      id: 'webdav_$remotePath',
+      id: 'webdav_${DateTime.now().millisecondsSinceEpoch}_${name.hashCode}',
       name: name,
       singer: singer,
       album: album,

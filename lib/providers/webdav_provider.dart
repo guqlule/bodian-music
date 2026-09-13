@@ -53,17 +53,23 @@ class WebdavConfigNotifier extends StateNotifier<WebdavConfigState> {
     }
   }
 
-  /// 测试连接
-  Future<bool> testConnection(WebdavConfig config) async {
+  /// 详细测试连接
+  Future<({bool ok, String? error, int? fileCount})> testConnectionDetailed(WebdavConfig config) async {
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final ok = await _webdavService.testConnection(config);
+      final result = await _webdavService.testConnectionDetailed(config);
       state = state.copyWith(isLoading: false);
-      return ok;
+      return result;
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
-      return false;
+      return (ok: false, error: e.toString(), fileCount: null);
     }
+  }
+
+  /// 简单测试连接
+  Future<bool> testConnection(WebdavConfig config) async {
+    final result = await testConnectionDetailed(config);
+    return result.ok;
   }
 
   /// 保存并连接
@@ -92,6 +98,11 @@ class WebdavConfigNotifier extends StateNotifier<WebdavConfigState> {
   Future<int> scanRemote() async {
     return await _musicService.scanRemote();
   }
+
+  /// 清空音乐库
+  Future<void> clearLibrary() async {
+    await _musicService.clearLibrary();
+  }
 }
 
 /// WebDAV 配置 Provider
@@ -104,25 +115,3 @@ final webdavConfigProvider =
 final webdavSongsProvider = Provider<List<MusicInfo>>((ref) {
   return WebdavMusicService().songs;
 });
-
-/// WebDAV 扫描状态 Provider
-final webdavScanningProvider = Provider<WebdavScanState>((ref) {
-  final service = WebdavMusicService();
-  return WebdavScanState(
-    isScanning: service.isScanning,
-    progress: service.scanProgress,
-    totalFound: service.totalFound,
-  );
-});
-
-class WebdavScanState {
-  final bool isScanning;
-  final String? progress;
-  final int totalFound;
-
-  const WebdavScanState({
-    this.isScanning = false,
-    this.progress,
-    this.totalFound = 0,
-  });
-}

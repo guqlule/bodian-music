@@ -6,6 +6,7 @@ import '../../models/music_model.dart';
 import '../../providers/app_providers.dart';
 import '../../providers/webdav_provider.dart';
 import '../../services/webdav/webdav_music_service.dart';
+import '../../services/webdav/webdav_service.dart';
 
 enum _SortMode { name, singer, addTime }
 
@@ -23,16 +24,6 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
   bool _multiSelectMode = false;
   final Set<String> _selectedIds = {};
-  bool _initialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _musicService.loadLibrary();
-      if (mounted) setState(() => _initialized = true);
-    });
-  }
 
   @override
   void dispose() {
@@ -75,30 +66,26 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
       return;
     }
 
+    // 显示扫描进度
+    if (!mounted) return;
     showDialog(context: context, barrierDismissible: false,
-      builder: (_) => Center(child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CircularProgressIndicator(color: AppColors.primary),
-          const SizedBox(height: 16),
-          Text('扫描中...', style: TextStyle(color: Colors.white)),
-        ],
-      )),
+      builder: (_) => _ScanProgressDialog(),
     );
 
     try {
       final count = await ref.read(webdavConfigProvider.notifier).scanRemote();
       if (!mounted) return;
-      Navigator.pop(context);
+      Navigator.pop(context); // 关闭进度弹窗
       setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('扫描完成，共 $count 首歌曲')),
+        SnackBar(content: Text('扫描完成，共 $count 首歌曲'), backgroundColor: AppColors.primaryDark),
       );
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context);
+      final msg = e is WebdavException ? e.message : '扫描失败: $e';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('扫描失败: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text(msg), backgroundColor: Colors.red, duration: const Duration(seconds: 4)),
       );
     }
   }
@@ -161,10 +148,31 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
                 setState(() { _multiSelectMode = false; _selectedIds.clear(); });
               },
             ),
+            IconButton(
+              icon: const Icon(Icons.close_rounded, size: 20),
+              onPressed: () => setState(() { _multiSelectMode = false; _selectedIds.clear(); }),
+            ),
           ] else ...[
+            if (songs.isNotEmpty)
+              PopupMenuButton<_SortMode>(
+                icon: const Icon(Icons.sort_rounded, size: 20),
+                onSelected: (m) => setState(() {
+                  if (_sortMode == m) {
+                    _sortAsc = !_sortAsc;
+                  } else {
+                    _sortMode = m;
+                    _sortAsc = false;
+                  }
+                }),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: _SortMode.name, child: Text('按歌名')),
+                  const PopupMenuItem(value: _SortMode.singer, child: Text('按歌手')),
+                  const PopupMenuItem(value: _SortMode.addTime, child: Text('按添加时间')),
+                ],
+              ),
             IconButton(
               icon: const Icon(Icons.refresh_rounded, size: 20),
-              onPressed: _scanRemote,
+              onPressed: state.isConnected ? _scanRemote : null,
               tooltip: '扫描',
             ),
             IconButton(
@@ -178,36 +186,55 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
       body: Column(
         children: [
           // 搜索栏
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: TextField(
-              controller: _searchCtrl,
-              onChanged: (v) => setState(() => _searchQuery = v),
-              style: TextStyle(color: AppColors.textPrimary, fontSize: 14),
-              decoration: InputDecoration(
-                hintText: '搜索 WebDAV 歌曲...',
-                hintStyle: TextStyle(color: AppColors.textHint),
-                prefixIcon: Icon(Icons.search_rounded, color: AppColors.textHint, size: 20),
-                filled: true,
-                fillColor: AppColors.surface,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+          if (songs.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _searchQuery = v),
+                style: TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: '搜索歌曲...',
+                  hintStyle: TextStyle(color: AppColors.textHint),
+                  prefixIcon: Icon(Icons.search_rounded, color: AppColors.textHint, size: 20),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear_rounded, size: 18),
+                          onPressed: () { _searchCtrl.clear(); setState(() => _searchQuery = ''); },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: AppColors.surface,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
             ),
-          ),
 
           // 信息栏
           if (songs.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Row(
                 children: [
-                  Text('${songs.length} 首歌曲', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  Text(
+                    _searchQuery.isEmpty
+                        ? '${songs.length} 首歌曲'
+                        : '搜索结果 ${songs.length} 首',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  ),
                   const Spacer(),
-                  if (!state.isConnected)
-                    Text('未连接', style: TextStyle(color: Colors.red.withValues(alpha: 0.7), fontSize: 12)),
+                  if (state.isConnected)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryDark.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text('已连接', style: TextStyle(color: AppColors.primaryDark, fontSize: 10)),
+                    ),
                 ],
               ),
             ),
@@ -215,7 +242,7 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
           // 歌曲列表
           Expanded(
             child: songs.isEmpty
-                ? _buildEmpty()
+                ? _buildEmpty(state)
                 : _buildSongList(songs),
           ),
         ],
@@ -224,37 +251,105 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
           ? FloatingActionButton(
               onPressed: _playAll,
               backgroundColor: AppColors.primaryDark,
-              child: const Icon(Icons.play_arrow_rounded, color: Colors.white),
+              child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 28),
             )
           : null,
     );
   }
 
-  Widget _buildEmpty() {
-    final state = ref.watch(webdavConfigProvider);
+  Widget _buildEmpty(WebdavConfigState state) {
+    if (state.isLoading) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: AppColors.primaryDark),
+            const SizedBox(height: 16),
+            Text('连接中...', style: TextStyle(color: AppColors.textSecondary)),
+          ],
+        ),
+      );
+    }
+
+    if (!state.isConnected) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Icon(Icons.cloud_off_rounded, size: 40, color: AppColors.textHint.withValues(alpha: 0.5)),
+              ),
+              const SizedBox(height: 20),
+              Text('连接 WebDAV 服务器', style: TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text(
+                '支持群晖、威联通、Nextcloud、Alist 等\n任何支持 WebDAV 协议的服务器',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.5),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () => context.push('/webdav-settings'),
+                icon: const Icon(Icons.settings_rounded, size: 18),
+                label: const Text('配置服务器'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryDark,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 已连接但没有歌曲
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.cloud_off_rounded, size: 64, color: AppColors.textHint.withValues(alpha: 0.3)),
-          const SizedBox(height: 16),
-          Text(
-            state.isConnected ? '扫描远程目录以发现音乐' : '请先连接 WebDAV 服务器',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
-          ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: state.isConnected ? _scanRemote : () => context.push('/webdav-settings'),
-            icon: Icon(state.isConnected ? Icons.refresh_rounded : Icons.settings_rounded, size: 18),
-            label: Text(state.isConnected ? '开始扫描' : '去设置'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primaryDark,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: AppColors.primaryDark.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Icon(Icons.cloud_queue_rounded, size: 40, color: AppColors.primaryDark),
             ),
-          ),
-        ],
+            const SizedBox(height: 20),
+            Text('音乐库为空', style: TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text(
+              '点击下方按钮扫描远程目录',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _scanRemote,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('开始扫描'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryDark,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -270,20 +365,27 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
 
         return ListTile(
           onLongPress: () {
-            setState(() {
-              _multiSelectMode = true;
-              _selectedIds.add(song.id);
-            });
+            if (!_multiSelectMode) {
+              setState(() {
+                _multiSelectMode = true;
+                _selectedIds.add(song.id);
+              });
+            }
           },
           onTap: _multiSelectMode ? () => _toggleSelect(song.id) : () => _playSong(song),
           leading: _multiSelectMode
               ? Icon(
-                  isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                  isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
                   color: isSelected ? AppColors.primaryDark : AppColors.textHint,
+                  size: 22,
                 )
               : isPlaying
                   ? Icon(Icons.equalizer_rounded, color: AppColors.primaryDark, size: 20)
-                  : Text('${index + 1}', style: TextStyle(color: AppColors.textHint, fontSize: 13)),
+                  : SizedBox(
+                      width: 24,
+                      child: Text('${index + 1}', textAlign: TextAlign.center,
+                        style: TextStyle(color: AppColors.textHint, fontSize: 13)),
+                    ),
           title: Text(
             song.name,
             maxLines: 1,
@@ -295,17 +397,73 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
             ),
           ),
           subtitle: Text(
-            '${song.singer}${song.album.isNotEmpty ? ' · ${song.album}' : ''}',
+            [if (song.singer.isNotEmpty) song.singer, if (song.album.isNotEmpty) song.album].join(' · '),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
           ),
-          trailing: Text(
-            'WebDAV',
-            style: TextStyle(color: AppColors.textHint.withValues(alpha: 0.5), fontSize: 10),
-          ),
+          trailing: Icon(Icons.cloud_rounded, size: 14, color: AppColors.textHint.withValues(alpha: 0.4)),
         );
       },
+    );
+  }
+}
+
+/// 扫描进度弹窗
+class _ScanProgressDialog extends StatefulWidget {
+  @override
+  State<_ScanProgressDialog> createState() => _ScanProgressDialogState();
+}
+
+class _ScanProgressDialogState extends State<_ScanProgressDialog> {
+  @override
+  void initState() {
+    super.initState();
+    _checkProgress();
+  }
+
+  void _checkProgress() async {
+    while (mounted) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final service = WebdavMusicService();
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 48),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: AppColors.primaryDark),
+            const SizedBox(height: 20),
+            Text('扫描中...', style: TextStyle(
+              color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            if (service.scanProgress != null)
+              Text(
+                service.scanProgress!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+              ),
+            const SizedBox(height: 8),
+            Text(
+              '已发现 ${service.totalFound} 首歌曲',
+              style: TextStyle(color: AppColors.primaryDark, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
