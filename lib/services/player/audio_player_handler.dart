@@ -82,16 +82,16 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   /// audio_service 会将 title/artist/displayDescription 写入 MediaSession metadata，
   /// 蓝牙 AVRCP / 车机从这些字段读取歌词
   ///
-  /// 车机蓝牙歌词刷新策略：
-  /// - mediaId 保持不变（同首歌 = 同 ID），避免被车机视为快速切歌而忽略
-  /// - 只在歌词文本真正变化时才推 metadata，减少不必要的 IPC
-  /// - 推送间隔 2 秒，给车机足够时间处理 metadata 变更
-  /// - 每次推送同时更新 playbackState，通过 position 变化触发车机刷新
+  /// 车机蓝牙歌词刷新策略（参考 androidx/media Issue #430）：
+  /// - 车机的 Bluetooth.apk 只有在 playback state 变化时才重新读取 metadata
+  /// - 单纯推 metadata 变化，车机不会刷新显示
+  /// - 所以每次推歌词时，同时推 playback state（position 微调），触发车机重新读取
+  /// - 歌词没变时不推，避免无效 IPC
   void updateLyricLine(String? line) {
     if (_currentItem == null) return;
     final now = DateTime.now();
-    // 节流：2 秒内不重复推送
-    if (now.difference(_lastLyricPush).inMilliseconds < 2000) return;
+    // 节流：1 秒内不重复推送
+    if (now.difference(_lastLyricPush).inMilliseconds < 1000) return;
     // 歌词没变就不推（但允许从有到无、从无到有的切换）
     final text = line ?? '';
     if (text == _lastLyricText) return;
@@ -103,7 +103,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final cur = _currentItem!;
 
       final updatedItem = MediaItem(
-        // mediaId 保持不变 → 车机不视为切歌 → 正常刷新 metadata
+        // mediaId 保持不变 → 车机不视为切歌
         id: _baseMediaId,
         // title 放歌词 → 灵动岛/车机 AVRCP 读取
         title: hasLine ? line : cur.title,
@@ -121,8 +121,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       );
       _currentItem = updatedItem;
       mediaItem.add(updatedItem);
-      // 强制推一次 playbackState，确保车机/蓝牙收到元数据变更通知
-      _broadcastState();
+      // 关键：同时推 playback state（带 position 微调）
+      // 车机 Bluetooth.apk 只在 playback state 变化时重新读取 metadata
+      _broadcastState(positionOffset: 1);
     } catch (_) {}
   }
 
@@ -172,15 +173,21 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   Future<void> Function(int index)? onPlayIndex;
 
   /// 同步播放状态给系统（蓝牙 AVRCP 依赖）
+  /// [positionOffset] 用于歌词推送时微调 position，触发车机重新读取 metadata
   void syncPlaybackState() => _broadcastState();
 
-  void _broadcastState() {
+  void _broadcastState({int positionOffset = 0}) {
     try {
       final playing = _player.playing;
       final processingState = _mapProcessingState(_player.processingState);
       final ci = _player.currentIndex;
       final qLen = queue.value.length;
       final validIndex = (ci != null && ci >= 0 && ci < qLen) ? ci : null;
+      // 微调 position → 车机检测到 playback state 变化 → 重新读取 metadata
+      var position = _player.position;
+      if (positionOffset > 0) {
+        position = position + Duration(milliseconds: positionOffset);
+      }
 
       playbackState.add(PlaybackState(
         controls: [
@@ -195,7 +202,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         },
         processingState: processingState,
         playing: playing,
-        updatePosition: _player.position,
+        updatePosition: position,
         bufferedPosition: _player.bufferedPosition,
         speed: _player.speed,
         queueIndex: validIndex,
