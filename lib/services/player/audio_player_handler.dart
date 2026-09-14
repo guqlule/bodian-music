@@ -5,6 +5,13 @@ import '../../models/music_model.dart';
 
 /// 音频后台服务 handler
 /// 创建 Android MediaSession，让蓝牙耳机/车载通过 AVRCP 控制播放
+///
+/// 车机蓝牙歌词显示原理：
+/// - 车机通过 AVRCP 读取 MediaSession metadata（title 字段）
+/// - 大部分车机只在 mediaId 变化时才重新读取 metadata
+/// - 但 mediaId 频繁变化会被车机视为"快速切歌"而忽略
+/// - 所以用一种折中方案：歌曲播放期间 mediaId 不变，
+///   通过 PlaybackState 的 position 更新触发车机刷新 metadata
 class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   final AudioPlayer _player;
   final Future<void> Function() onPlayNext;
@@ -12,7 +19,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   MediaItem? _currentItem;
   String _baseMediaId = '';
   DateTime _lastLyricPush = DateTime(0);
-  int _lyricSeq = 0;
+  String? _lastLyricText;
 
   AudioPlayerHandler({
     required AudioPlayer player,
@@ -43,7 +50,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       return;
     }
     _baseMediaId = music.id;
-    _lyricSeq = 0;
+    _lastLyricText = null;
     try {
       final subtitle = '${music.singer} · ${music.album}';
       Uri? artUri;
@@ -74,25 +81,33 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   /// 更新歌词行 — 通过 audio_service 的 mediaItem 推送到 MediaSession metadata
   /// audio_service 会将 title/artist/displayDescription 写入 MediaSession metadata，
   /// 蓝牙 AVRCP / 车机从这些字段读取歌词
-  /// 注意：车机 AVRCP 通过 mediaId 判断是否同一首歌，需要在 mediaId 中加入序号
-  /// 迫使车机重新读取 metadata 才能刷新歌词显示
+  ///
+  /// 车机蓝牙歌词刷新策略：
+  /// - mediaId 保持不变（同首歌 = 同 ID），避免被车机视为快速切歌而忽略
+  /// - 只在歌词文本真正变化时才推 metadata，减少不必要的 IPC
+  /// - 推送间隔 2 秒，给车机足够时间处理 metadata 变更
+  /// - 每次推送同时更新 playbackState，通过 position 变化触发车机刷新
   void updateLyricLine(String? line) {
     if (_currentItem == null) return;
     final now = DateTime.now();
-    if (now.difference(_lastLyricPush).inMilliseconds < 200) return;
+    // 节流：2 秒内不重复推送
+    if (now.difference(_lastLyricPush).inMilliseconds < 2000) return;
+    // 歌词没变就不推（但允许从有到无、从无到有的切换）
+    final text = line ?? '';
+    if (text == _lastLyricText) return;
+    _lastLyricText = text;
     _lastLyricPush = now;
 
     try {
       final hasLine = line != null && line.isNotEmpty;
       final cur = _currentItem!;
-      _lyricSeq++;
 
       final updatedItem = MediaItem(
-        // mediaId 加入序号 → 车机 AVRCP 认为是新 metadata → 强制重新读取
-        id: '$_baseMediaId#$_lyricSeq',
+        // mediaId 保持不变 → 车机不视为切歌 → 正常刷新 metadata
+        id: _baseMediaId,
         // title 放歌词 → 灵动岛/车机 AVRCP 读取
         title: hasLine ? line : cur.title,
-        // artist 保持原歌手名，不再拼接歌名（避免第二行滚动）
+        // artist 保持原歌手名
         artist: cur.artist,
         album: cur.album ?? '',
         artUri: cur.artUri,
@@ -102,7 +117,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         displayDescription: hasLine ? line : (cur.album ?? ''),
         extras: {
           'lyric': line ?? '',
-          'lyricSeq': _lyricSeq,
         },
       );
       _currentItem = updatedItem;

@@ -124,9 +124,9 @@ class PlayerService {
           (_durationController.value != null && position >= _durationController.value!)) {
         _positionController.add(position);
       }
-      // 节流：歌词同步 + MediaSession 同步限频至每500ms一次，避免高频平台IPC
+      // 节流：歌词同步 + MediaSession 同步限频至每2秒一次，给车机足够时间处理 metadata
       final now = DateTime.now();
-      if (now.difference(_lastMediaSync).inMilliseconds >= 500) {
+      if (now.difference(_lastMediaSync).inMilliseconds >= 2000) {
         _lastMediaSync = now;
         _updateMediaLyric(position);
         _mediaHandler?.syncPlaybackState();
