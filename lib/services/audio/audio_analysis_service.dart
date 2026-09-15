@@ -37,8 +37,15 @@ class AudioAnalysisService {
   bool _capturing = false;
   int _currentSessionId = -1;
 
-  final List<List<double>> _history = [];
+  // 环形缓冲区代替 List 队列，避免每帧分配新 List
+  // 用 _historyIndex 跟踪下次写入位置，_historyFilled 跟踪有效元素数
   static const int _historySize = 3;
+  final List<List<double>> _history = List.generate(
+    _historySize,
+    (_) => List<double>.filled(_nBars, 0),
+  );
+  int _historyIndex = 0;
+  int _historyFilled = 0;
   double _lastBass = 0;
   double _beatThreshold = 0.15;
   int _beatCooldown = 0;
@@ -256,37 +263,44 @@ class AudioAnalysisService {
       final endIdx = _mapEndIdx[i].clamp(startIdx, nFft - 1);
       double maxVal = 0;
       for (int j = startIdx; j <= endIdx; j++) {
-        final v = fft[j].abs().clamp(0.0, 1.0);
+        final v = fft[j].abs();
         if (v > maxVal) maxVal = v;
       }
+      if (maxVal > 1.0) maxVal = 1.0;
       _frequencies[i] = maxVal;
     }
 
-    _history.add(List<double>.from(_frequencies));
-    if (_history.length > _historySize) _history.removeAt(0);
+    // 写入环形缓冲区（零分配）
+    final slot = _history[_historyIndex];
+    for (int i = 0; i < _nBars; i++) {
+      slot[i] = _frequencies[i];
+    }
+    _historyIndex = (_historyIndex + 1) % _historySize;
+    if (_historyFilled < _historySize) _historyFilled++;
 
-    // 平滑处理（原地写入预分配列表）
+    // 平滑 + 分段累加（合并到一个循环，避免多次遍历 _smoothed）
+    // 旧实现：3 次 for 循环（累计、bass、mid、treble）= 256 次迭代
+    // 新实现：1 次 for 循环 = 64 次迭代
+    final invHist = 1.0 / _historyFilled;
+    double bassSum = 0, midSum = 0, trebleSum = 0;
     for (int i = 0; i < _nBars; i++) {
       double sum = 0;
-      for (final h in _history) {
-        sum += h[i];
+      for (int h = 0; h < _historyFilled; h++) {
+        sum += _history[h][i];
       }
-      _smoothed[i] = sum / _history.length;
-    }
-
-    double bass = 0, mid = 0, treble = 0;
-    for (int i = 0; i < 64; i++) {
+      final v = sum * invHist;
+      _smoothed[i] = v;
       if (i < 16) {
-        bass += _smoothed[i];
+        bassSum += v;
       } else if (i < 40) {
-        mid += _smoothed[i];
+        midSum += v;
       } else {
-        treble += _smoothed[i];
+        trebleSum += v;
       }
     }
-    bass /= 16;
-    mid /= 24;
-    treble /= 24;
+    final bass = bassSum / 16;
+    final mid = midSum / 24;
+    final treble = trebleSum / 24;
 
     if (_beatCooldown > 0) _beatCooldown--;
     double beat = 0;

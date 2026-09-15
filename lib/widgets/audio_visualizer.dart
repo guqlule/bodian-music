@@ -878,6 +878,27 @@ final Paint _flameTonguePaint = Paint()..style = PaintingStyle.stroke..strokeWid
 final Paint _flameEmberPaint = Paint()..style = PaintingStyle.fill;
 final Paint _flameSmokePaint = Paint()..style = PaintingStyle.fill;
 final Paint _flameWavePaint = Paint()..style = PaintingStyle.stroke..strokeWidth = 1.0;
+// 复用的 Path 缓存：每帧 3 层 × 5 舌 = 15 次 Path() 分配 → 改为 reset()
+final Path _flamePath1 = Path();
+final Path _flamePath2 = Path();
+final Path _flamePath3 = Path();
+
+// 静态常量配置：避免每帧分配 List<Map>
+class _FlameLayerCfg {
+  final Color colorInner;
+  final Color colorOuter;
+  final double baseHeight;
+  final double baseWidth;
+  final double speed;
+  final double amp;
+  const _FlameLayerCfg(this.colorInner, this.colorOuter, this.baseHeight, this.baseWidth, this.speed, this.amp);
+}
+
+const List<_FlameLayerCfg> _flameLayerConfigs = [
+  _FlameLayerCfg(Colors.white, Color(0xFFFFCC44), 0.35, 0.06, 0.18, 0.02),
+  _FlameLayerCfg(Color(0xFFFF8800), Color(0xFFCC3300), 0.28, 0.12, 0.12, 0.035),
+  _FlameLayerCfg(Color(0xFFCC2200), Color(0xFF661100), 0.20, 0.20, 0.08, 0.04),
+];
 
 class _FlamePainter extends CustomPainter {
   final _AudioVisualizerState state;
@@ -908,20 +929,16 @@ class _FlamePainter extends CustomPainter {
 
     // ---- 火舌层 ----
     // 三层：内核(白金) → 中层(橙) → 外层(暗红)
-    final layerConfigs = [
-      {'colorInner': Colors.white, 'colorOuter': const Color(0xFFFFCC44), 'baseHeight': 0.35, 'baseWidth': 0.06, 'speed': 0.18, 'amp': 0.02},
-      {'colorInner': const Color(0xFFFF8800), 'colorOuter': const Color(0xFFCC3300), 'baseHeight': 0.28, 'baseWidth': 0.12, 'speed': 0.12, 'amp': 0.035},
-      {'colorInner': const Color(0xFFCC2200), 'colorOuter': const Color(0xFF661100), 'baseHeight': 0.20, 'baseWidth': 0.20, 'speed': 0.08, 'amp': 0.04},
-    ];
+    // 配置改用静态 const List（避免每帧分配 Map）
 
-    for (int li = 0; li < layerConfigs.length; li++) {
-      final cfg = layerConfigs[li];
-      final colorInner = cfg['colorInner'] as Color;
-      final colorOuter = cfg['colorOuter'] as Color;
-      final baseH = cfg['baseHeight'] as double;
-      final baseW = cfg['baseWidth'] as double;
-      final spd = cfg['speed'] as double;
-      final amp = cfg['amp'] as double;
+    for (int li = 0; li < _flameLayerConfigs.length; li++) {
+      final cfg = _flameLayerConfigs[li];
+      final colorInner = cfg.colorInner;
+      final colorOuter = cfg.colorOuter;
+      final baseH = cfg.baseHeight;
+      final baseW = cfg.baseWidth;
+      final spd = cfg.speed;
+      final amp = cfg.amp;
 
       // 每层 5 条火舌
       for (int t = 0; t < 5; t++) {
@@ -933,7 +950,8 @@ class _FlamePainter extends CustomPainter {
         final tongueW = w * baseW * (0.5 + random.nextDouble() * 0.5);
         final sway = sin(frame * spd + t * 1.7 + li * 0.8) * amp * w;
 
-        final path = Path();
+        final path = _flamePath1;
+        path.reset();
         path.moveTo(tongueX - tongueW * 0.5, tongueBaseY);
 
         // 左侧贝塞尔
@@ -1059,6 +1077,7 @@ class _FlamePainter extends CustomPainter {
 // ==================== 极光（模糊光线）====================
 
 final Paint _auroraPulsePaint = Paint()..style = PaintingStyle.fill;
+final Paint _auroraBgGlowPaint = Paint(); // 缓存避免每帧分配
 
 class _AuroraPainter extends CustomPainter {
   final _AudioVisualizerState state;
@@ -1102,16 +1121,15 @@ class _AuroraPainter extends CustomPainter {
       }
     }
 
-    // 背景微光
-    final bgGlow = Paint()
-      ..shader = ui.Gradient.radial(
-        Offset(w * 0.5, h * 0.35), w * 0.8,
-        [
-          AppColors.primaryDark.withValues(alpha: 0.06 + spectrum.volume * 0.05),
-          AppColors.primaryDark.withValues(alpha: 0),
-        ],
-      );
-    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), bgGlow);
+// 背景微光（重用缓存 Paint，仅每帧更新 shader）
+    _auroraBgGlowPaint.shader = ui.Gradient.radial(
+      Offset(w * 0.5, h * 0.35), w * 0.8,
+      [
+        AppColors.primaryDark.withValues(alpha: 0.06 + spectrum.volume * 0.05),
+        AppColors.primaryDark.withValues(alpha: 0),
+      ],
+    );
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), _auroraBgGlowPaint);
 
     // 绘制星尘
     for (final star in state._auroraStars) {
