@@ -494,6 +494,9 @@ class _BarsPainter extends CustomPainter {
 
 final Paint _waveFillPaint = Paint()..style = PaintingStyle.fill;
 final Paint _waveStrokePaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
+// 复用的 Path 缓存：4 层波浪 × (1 主路径 + 1 填充路径) = 8 次 Path() 分配 → 0
+final Path _wavePath = Path();
+final Path _waveFillPath = Path();
 
 class _WavePainter extends CustomPainter {
   final _AudioVisualizerState state;
@@ -510,7 +513,7 @@ class _WavePainter extends CustomPainter {
     final t = state._frame * 0.025 + bass * 0.8;
 
     for (int layer = 0; layer < 4; layer++) {
-      final path = Path();
+      final path = _wavePath..reset();
       final yBase = h * (0.30 + layer * 0.15);
       // 振幅：随音量缓动，层间递减
       final baseAmp = h * 0.10 * (1 - layer * 0.10);
@@ -528,8 +531,10 @@ class _WavePainter extends CustomPainter {
         path.lineTo(x, y);
       }
 
-      // 渐变填充到底部
-      final fillPath = Path.from(path)
+      // 渐变填充到底部（复用 _waveFillPath）
+      _waveFillPath
+        ..reset()
+        ..addPath(path, Offset.zero)
         ..lineTo(w, h)
         ..lineTo(0, h)
         ..close();
@@ -537,7 +542,7 @@ class _WavePainter extends CustomPainter {
         Offset(0, yBase - amp), Offset(0, h),
         [tColor, tColor.withValues(alpha: 0)],
       );
-      canvas.drawPath(fillPath, _waveFillPaint);
+      canvas.drawPath(_waveFillPath, _waveFillPaint);
       // 描边
       _waveStrokePaint
         ..color = tColor.withValues(alpha: 0.65)
@@ -1078,6 +1083,7 @@ class _FlamePainter extends CustomPainter {
 
 final Paint _auroraPulsePaint = Paint()..style = PaintingStyle.fill;
 final Paint _auroraBgGlowPaint = Paint(); // 缓存避免每帧分配
+final Path _auroraRayPath = Path(); // 缓存：避免每帧 ~16 次 Path() 分配
 
 class _AuroraPainter extends CustomPainter {
   final _AudioVisualizerState state;
@@ -1160,7 +1166,7 @@ class _AuroraPainter extends CustomPainter {
         final topY = h * (0.05 + layerFrac * 0.08);
         final botY = h * (0.65 + layerFrac * 0.1);
 
-        final path = Path();
+        final path = _auroraRayPath..reset();
         path.moveTo(topX - spread * 0.5, topY);
         path.lineTo(topX + spread * 0.5, topY);
         path.lineTo(botX + spread * 0.7, botY);
@@ -1210,6 +1216,10 @@ final Paint _waterWaveFillPaint = Paint()..style = PaintingStyle.fill;
 final Paint _waterBubblePaint = Paint()..style = PaintingStyle.stroke..strokeWidth = 1.0;
 final Paint _waterDropPaint = Paint()..style = PaintingStyle.fill;
 final Paint _waterDropTrailPaint = Paint()..style = PaintingStyle.stroke;
+// 复用的 Path 缓存：避免每帧 5 次 Path() 分配（水波）+ 每次光线 Path() 分配
+final Path _waterWavePath = Path();
+final Path _waterWaveFillPath = Path();
+final Path _waterRayPath = Path();
 
 class _WaterPainter extends CustomPainter {
   final _AudioVisualizerState state;
@@ -1264,7 +1274,7 @@ class _WaterPainter extends CustomPainter {
         ],
         [0.0, 0.4, 1.0],
       );
-      final path = Path();
+      final path = _waterRayPath..reset();
       path.moveTo(ray.x + sway - ray.width * 0.5, 0);
       path.lineTo(ray.x + sway + ray.width * 0.5, 0);
       path.lineTo(ray.x + sway + ray.angle * h + ray.width * 1.2, h);
@@ -1348,7 +1358,7 @@ class _WaterPainter extends CustomPainter {
     final surfaceY = h * 0.18;
     for (int layer = 0; layer < 5; layer++) {
       final lFrac = layer / 4.0;
-      final path = Path();
+      final path = _waterWavePath..reset();
       final yBase = surfaceY + layer * h * 0.04;
       final amp = (6 + spectrum.volume * 14) * (1 - lFrac * 0.4);
       final freq1 = 3.0 + lFrac * 1.5;
@@ -1372,8 +1382,15 @@ class _WaterPainter extends CustomPainter {
         Offset(0, yBase - amp), Offset(0, yBase + h * 0.15),
         [color.withValues(alpha: 0.12 - lFrac * 0.02), color.withValues(alpha: 0)],
       );
-      final fillPath = Path.from(path)..lineTo(w, yBase + h * 0.15)..lineTo(0, yBase + h * 0.15)..close();
-      canvas.drawPath(fillPath, _waterWaveFillPaint);
+      // 复用 _waterWaveFillPath：通过 addPath 复制主轨迹，然后追加底部封闭
+      _waterWaveFillPath
+        ..reset()
+        ..addPath(path, Offset.zero)
+        ..lineTo(w, yBase + h * 0.15)
+        ..lineTo(0, yBase + h * 0.15)
+        ..close();
+      canvas.drawPath(_waterWaveFillPath, _waterWaveFillPaint);
+
       _waterBubblePaint
         ..color = color.withValues(alpha: 0.5 - lFrac * 0.08)
         ..strokeWidth = 1.8 - layer * 0.2
