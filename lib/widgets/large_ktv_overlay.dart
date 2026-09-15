@@ -21,16 +21,25 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
   DateTime _basePosTime = DateTime.now();
   bool _playing = false;
   late Ticker _ticker;
+  DateTime _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
     super.initState();
-    _ticker = createTicker((_) {
-      if (mounted) setState(() {});
-    });
+    _ticker = createTicker(_onTick);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _readInitial();
     });
+  }
+
+  /// Ticker 回调：节流至 ~30fps，减少 setState 重建开销
+  /// 扫字视觉感受需要 30fps+ 才平滑，60fps 收益边际递减但开销翻倍
+  void _onTick(Duration elapsed) {
+    if (!mounted) return;
+    final now = DateTime.now();
+    if (now.difference(_lastTick).inMilliseconds < 33) return;
+    _lastTick = now;
+    setState(() {});
   }
 
   void _readInitial() {
