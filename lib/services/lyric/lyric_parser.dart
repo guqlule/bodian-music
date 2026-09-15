@@ -5,7 +5,7 @@ import 'package:crypto/crypto.dart';
 class LyricWord {
   final Duration time;
   final String text;
-  final Duration? duration; // 该字持续到下一个字的时间
+  Duration? duration; // 该字持续到下一个字的时间
 
   LyricWord({
     required this.time,
@@ -142,20 +142,11 @@ class LyricParser {
     }
 
     // 计算每个字的持续时间（到下一个字的时间差）
+    // 原地写入 duration，避免重新创建 LyricWord 对象
     for (int i = 0; i < words.length; i++) {
-      if (i + 1 < words.length) {
-        words[i] = LyricWord(
-          time: words[i].time,
-          text: words[i].text,
-          duration: words[i + 1].time - words[i].time,
-        );
-      } else {
-        words[i] = LyricWord(
-          time: words[i].time,
-          text: words[i].text,
-          duration: const Duration(seconds: 1),
-        );
-      }
+      words[i].duration = i + 1 < words.length
+          ? words[i + 1].time - words[i].time
+          : const Duration(seconds: 1);
     }
 
     return words;
