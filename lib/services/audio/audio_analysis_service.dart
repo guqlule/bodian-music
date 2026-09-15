@@ -237,7 +237,26 @@ class AudioAnalysisService {
 
   void _processFftData(List<double> fft) {
     if (fft.isEmpty) return;
-    lastFftMax = fft.reduce((a, b) => a > b ? a : b);
+
+    // 对数频率映射（使用预计算的映射表，避免每帧 exp/log 计算）
+    final nFft = fft.length;
+    // 动态调整映射表（如果 FFT 长度变化）
+    if (nFft != _lastFftLength) _initFrequencyMap(nFft);
+
+    double globalMax = 0;
+    for (int i = 0; i < _nBars; i++) {
+      final startIdx = _mapStartIdx[i];
+      final endIdx = _mapEndIdx[i].clamp(startIdx, nFft - 1);
+      double maxVal = 0;
+      for (int j = startIdx; j <= endIdx; j++) {
+        final v = fft[j].abs();
+        if (v > maxVal) maxVal = v;
+      }
+      if (maxVal > 1.0) maxVal = 1.0;
+      _frequencies[i] = maxVal;
+      if (maxVal > globalMax) globalMax = maxVal;
+    }
+    lastFftMax = globalMax;
 
     // 全零数据看门狗：数据在流动但内容是静音 → 换会话重连
     if (lastFftMax > 0.004) {
@@ -251,23 +270,6 @@ class AudioAnalysisService {
         _zeroFrames = 0;
         _reattachWithAltSession();
       }
-    }
-
-    // 对数频率映射（使用预计算的映射表，避免每帧 exp/log 计算）
-    final nFft = fft.length;
-    // 动态调整映射表（如果 FFT 长度变化）
-    if (nFft != _lastFftLength) _initFrequencyMap(nFft);
-
-    for (int i = 0; i < _nBars; i++) {
-      final startIdx = _mapStartIdx[i];
-      final endIdx = _mapEndIdx[i].clamp(startIdx, nFft - 1);
-      double maxVal = 0;
-      for (int j = startIdx; j <= endIdx; j++) {
-        final v = fft[j].abs();
-        if (v > maxVal) maxVal = v;
-      }
-      if (maxVal > 1.0) maxVal = 1.0;
-      _frequencies[i] = maxVal;
     }
 
     // 写入环形缓冲区（零分配）
