@@ -384,29 +384,31 @@ class _BarsPainter extends CustomPainter {
     final w = size.width;
     final h = size.height;
     final freqs = state._spectrum.frequencies;
-    // 底部辉光始终绘制（基于 bass/vol 脉动），让频谱在数据到达前也有视觉反馈
     final baseY = h * 0.88;
     final vol = state._spectrum.volume;
     final bass = state._spectrum.bass;
-    final glowR = w * 0.45 + bass * w * 0.1;
-    final glowA = 0.06 + vol * 0.10;
-    _barsGlowPaint.shader = ui.Gradient.radial(
-      Offset(w * 0.5, baseY + 4), glowR,
-      [AppColors.primaryDark.withValues(alpha: glowA), AppColors.primaryDark.withValues(alpha: 0)],
-    );
-    canvas.drawCircle(Offset(w * 0.5, baseY + 4), glowR, _barsGlowPaint);
+    final maxBarH = h * 0.72;
 
-    // 空数据时不绘制柱体（避免 freqs[fi] 越界）
-    if (freqs.isEmpty) return;
+    // 空数据时使用 sin 波模拟绘制，确保首帧/无数据时也有视觉反馈
+    final useSim = freqs.isEmpty;
+    final simPhase = state._frame * 0.06;
 
     final gap = w / (count + 1);
     final barW = gap * 0.58;
     final startX = gap;
-    final maxBarH = h * 0.72;
 
     for (int i = 0; i < count; i++) {
-      final fi = (i * freqs.length / count).floor().clamp(0, freqs.length - 1);
-      final value = freqs[fi];
+      // 空数据时用 sin 波模拟值，确保频谱始终可见
+      int fi = 0;
+      double value;
+      if (useSim) {
+        final ti = i / (count - 1);
+        value = (0.4 + 0.5 * sin(ti * 6 + simPhase) + 0.1 * sin(ti * 13 - simPhase * 2))
+            .clamp(0.15, 1.0);
+      } else {
+        fi = (i * freqs.length / count).floor().clamp(0, freqs.length - 1);
+        value = freqs[fi];
+      }
       final x = startX + i * gap;
       final barH = max(2.0, maxBarH * value);
 
@@ -473,7 +475,7 @@ class _BarsPainter extends CustomPainter {
       );
 
       // 峰值发光点
-      final peak = state._peaks.length > fi ? state._peaks[fi] : value;
+      final peak = useSim ? value : (state._peaks.length > fi ? state._peaks[fi] : value);
       final peakY = baseY - max(2.0, maxBarH * peak) - 6;
       // 直接计算 peakColor 颜色（避开 withValues 分配）
       final peakA = ((0.6 + value * 0.4) * 0.9 * 255).round();

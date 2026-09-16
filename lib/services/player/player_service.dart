@@ -142,8 +142,9 @@ class PlayerService {
       }
       // 实际播放时长已知时，更新 MediaItem 以让灵动岛/车机显示进度条
       // music.duration 经常为 0（API 未返回），但实际音频有完整时长
+      // 等待 handler 就绪后调用（避免 init 顺序导致早期 updateDuration 失效）
       if (duration != null && duration.inMilliseconds > 0) {
-        _mediaHandler?.updateDuration(duration);
+        _applyDurationUpdate(duration);
       }
     }));
 
@@ -284,6 +285,19 @@ class PlayerService {
       logDebug('[MediaSession] 初始化失败: $e');
       if (!_mediaSessionReady.isCompleted) _mediaSessionReady.complete();
     }
+  }
+
+  /// 等待 handler 就绪后更新 MediaItem.duration
+  /// 修复：首次播放时 durationStream 可能在 init 完成前就触发了
+  void _applyDurationUpdate(Duration duration) {
+    if (_mediaHandler != null) {
+      _mediaHandler!.updateDuration(duration);
+      return;
+    }
+    // handler 未就绪，等到就绪后立即调用
+    _mediaSessionReady.future.then((_) {
+      _mediaHandler?.updateDuration(duration);
+    }).catchError((_) {});
   }
 
   // 车机通知栏歌词
