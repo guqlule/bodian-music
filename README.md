@@ -8,7 +8,7 @@
 
 **波点音乐（Bodian Music）** 是一款采用 Flutter 框架开发的开源 Android 音乐播放器，旨在为开发者提供一个完整、可学习、可二次开发的移动音乐应用范例。
 
-类似于 **洛雪音乐（LX Music / lx-music）**、**QQ音乐**、**网易云音乐** 等优秀产品，波点音乐在 **蓝牙/车机歌词同步**、**全屏 KTV 歌词**、**频谱可视化**、**NAS 音乐库** 等核心功能上做了完整的实现，适合作为 Flutter 实战项目的参考。
+类似于 **洛雪音乐（LX Music / lx-music）**、**小Q**、**小W** 等优秀产品，波点音乐在 **蓝牙/车机歌词同步**、**全屏 KTV 歌词**、**频谱可视化**、**NAS 音乐库** 等核心功能上做了完整的实现，适合作为 Flutter 实战项目的参考。
 
 **学习价值**：如果你正在学习 Flutter，本项目涵盖了音频播放、后台服务（audio_service）、蓝牙 AVRCP、JavaScript 引擎、自定义渲染、WebDAV 协议等众多实战技术点。
 
@@ -30,7 +30,7 @@
 - 多套主题色板（深色 / 浅色模式）
 
 ### 车载 / 蓝牙
-- **蓝牙歌词同步**（AVRCP 协议，与 QQ音乐、洛雪音乐一致）
+- **蓝牙歌词同步**（AVRCP 协议，与 小Q、洛雪音乐一致）
 - **灵动岛歌词显示**（Android Dynamic Island）
 - 车机自动同步媒体控制
 
@@ -42,8 +42,8 @@
 
 ## 与同类项目的对比
 
-| 功能 | 波点音乐 | 洛雪音乐 (LX) | QQ音乐 | 网易云音乐 |
-|------|----------|----------------|--------|------------|
+| 功能 | 波点音乐 | 洛雪音乐 (LX) | 小Q | 小W |
+|------|----------|----------------|-----|-----|
 | Flutter 实现 | 支持 | 不支持 (Electron) | 不支持 (原生) | 不支持 (原生) |
 | 蓝牙歌词 | 支持 | 支持 | 支持 | 支持 |
 | PV KTV 歌词 | 支持 | 不支持 | 支持 | 支持 |
@@ -155,7 +155,7 @@ lib/
 参考 `androidx/media` Issue #430 的解决方案：
 - 通过 `audio_service` 的 `mediaItem` 更新 `title` 字段
 - 同时推 `playbackState`（position 微调）触发车机重新读取 metadata
-- 仅在歌词行变化时推送（与 QQ音乐、洛雪音乐 一致的行为）
+- 仅在歌词行变化时推送（与 小Q、洛雪音乐 一致的行为）
 
 ### 2. PV KTV 歌词扫字
 
@@ -187,7 +187,7 @@ lib/
 6. 如有任何疑问或侵权问题，请联系删除。
 7. 下载、安装或使用本项目，即表示您已阅读并同意上述声明。
 
-**项目内涉及的"洛雪音乐""LX Music""QQ音乐""网易云音乐"等名称仅为功能对比说明，不代表本项目与上述产品有任何官方关联或合作关系。**
+**项目内涉及的"洛雪音乐""LX Music""小Q""小W"等名称仅为功能对比说明，不代表本项目与上述产品有任何官方关联或合作关系。**
 
 ## 相关项目
 
@@ -195,7 +195,7 @@ lib/
 
 - [洛雪音乐 (lx-music-mobile)](https://github.com/lyswhut/lx-music-mobile) - 洛雪音乐移动版（Electron + Vue）
 - [lx-music-source](https://github.com/lyswhut/lx-music-source) - 洛雪音乐音源脚本仓库
-- [YesPlayMusic](https://github.com/qier222/YesPlayMusic) - 高颜值的第三方网易云播放器
+- [YesPlayMusic](https://github.com/qier222/YesPlayMusic) - 高颜值的第三方小W平台播放器
 - [BlackHole](https://github.com/Sangwan5688/BlackHole) - Flutter 实现的音乐播放器
 - [SPlayer](https://github.com/jayjd/SPlayer) - Vue 实现的简约音乐播放器
 

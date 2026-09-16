@@ -422,7 +422,7 @@ class _MyListScreenState extends ConsumerState<MyListScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '粘贴 QQ音乐/网易云 歌单分享链接',
+                '粘贴 小Q/小W 歌单分享链接',
                 style: TextStyle(color: AppColors.textHint, fontSize: 12),
               ),
               const SizedBox(height: 12),
