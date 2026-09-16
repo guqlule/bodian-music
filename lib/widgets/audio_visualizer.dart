@@ -787,7 +787,7 @@ class _ParticlePainter extends CustomPainter {
       // 尾迹
       final trailLen = max(0.0, (sqrt(star.speed * star.speed) * 18 + freqVal * 8));
       if (trailLen > 2) {
-        final trailPath = Path();
+        final trailPath = _cosmicTrailPath..reset();
         trailPath.moveTo(px, py);
         for (int t = 1; t <= 12; t++) {
           final ta = star.angle - star.speed * t * 1.5;
@@ -887,6 +887,8 @@ final Paint _flameWavePaint = Paint()..style = PaintingStyle.stroke..strokeWidth
 final Path _flamePath1 = Path();
 final Path _flamePath2 = Path();
 final Path _flamePath3 = Path();
+final Path _flameWavePath = Path(); // 复用：6 次/帧热浪 Path() 分配
+final Path _cosmicTrailPath = Path(); // 复用：24 次/帧恒星尾迹 Path() 分配
 
 // 静态常量配置：避免每帧分配 List<Map>
 class _FlameLayerCfg {
@@ -1065,7 +1067,7 @@ class _FlamePainter extends CustomPainter {
     _flameWavePaint.color = AppColors.primaryDark.withValues(alpha: 0.06 + spectrum.volume * 0.04);
     for (int i = 0; i < 6; i++) {
       final waveY = h * (0.82 + i * 0.025);
-      final wavePath = Path();
+      final wavePath = _flameWavePath..reset();
       wavePath.moveTo(0, waveY);
       for (double x = 0; x <= w; x += 3) {
         final y = waveY + sin(x * 0.04 + frame * 0.12 + i * 0.8) * (3 + spectrum.bass * 4);
