@@ -897,8 +897,6 @@ final Paint _flameSmokePaint = Paint()..style = PaintingStyle.fill;
 final Paint _flameWavePaint = Paint()..style = PaintingStyle.stroke..strokeWidth = 1.0;
 // 复用的 Path 缓存：每帧 3 层 × 5 舌 = 15 次 Path() 分配 → 改为 reset()
 final Path _flamePath1 = Path();
-final Path _flamePath2 = Path();
-final Path _flamePath3 = Path();
 final Path _flameWavePath = Path(); // 复用：6 次/帧热浪 Path() 分配
 final Path _cosmicTrailPath = Path(); // 复用：24 次/帧恒星尾迹 Path() 分配
 
