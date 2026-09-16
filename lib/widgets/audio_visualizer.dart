@@ -1461,14 +1461,14 @@ class _WaterPainter extends CustomPainter {
     for (final b in state._bubbles) {
       final alpha = b.life.clamp(0.0, 1.0);
       final bx = b.x + b.wobble;
-      // 气泡外圈
+      // 气泡外圈（直接 int 运算，避开 withValues 分配）
       _waterBubblePaint
-        ..color = AppColors.primaryDark.withValues(alpha: alpha * 0.35)
+        ..color = Color.fromARGB((alpha * 0.35 * 255).round(), 0xB0, 0x90, 0x6B)
         ..strokeWidth = 1.0
         ..style = PaintingStyle.stroke;
       canvas.drawCircle(Offset(bx, b.y), b.radius, _waterBubblePaint);
-      // 高光点
-      _waterCausticPaint.color = Colors.white.withValues(alpha: alpha * 0.45);
+      // 高光点（白色）
+      _waterCausticPaint.color = Color.fromARGB((alpha * 0.45 * 255).round(), 0xFF, 0xFF, 0xFF);
       canvas.drawCircle(Offset(bx - b.radius * 0.3, b.y - b.radius * 0.3), b.radius * 0.25, _waterCausticPaint);
     }
 
