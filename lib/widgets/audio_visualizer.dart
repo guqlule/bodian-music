@@ -384,18 +384,10 @@ class _BarsPainter extends CustomPainter {
     final w = size.width;
     final h = size.height;
     final freqs = state._spectrum.frequencies;
-    // 空数据时仅画背景（保留 visualizer 占位），不绘制柱体
-    if (freqs.isEmpty) return;
-
-    final gap = w / (count + 1);
-    final barW = gap * 0.58;
-    final startX = gap;
+    // 底部辉光始终绘制（基于 bass/vol 脉动），让频谱在数据到达前也有视觉反馈
     final baseY = h * 0.88;
-    final maxBarH = h * 0.72;
     final vol = state._spectrum.volume;
     final bass = state._spectrum.bass;
-
-    // 底部辉光（随低音脉动）
     final glowR = w * 0.45 + bass * w * 0.1;
     final glowA = 0.06 + vol * 0.10;
     _barsGlowPaint.shader = ui.Gradient.radial(
@@ -403,6 +395,14 @@ class _BarsPainter extends CustomPainter {
       [AppColors.primaryDark.withValues(alpha: glowA), AppColors.primaryDark.withValues(alpha: 0)],
     );
     canvas.drawCircle(Offset(w * 0.5, baseY + 4), glowR, _barsGlowPaint);
+
+    // 空数据时不绘制柱体（避免 freqs[fi] 越界）
+    if (freqs.isEmpty) return;
+
+    final gap = w / (count + 1);
+    final barW = gap * 0.58;
+    final startX = gap;
+    final maxBarH = h * 0.72;
 
     for (int i = 0; i < count; i++) {
       final fi = (i * freqs.length / count).floor().clamp(0, freqs.length - 1);
