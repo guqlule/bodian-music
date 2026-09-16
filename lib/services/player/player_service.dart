@@ -288,11 +288,22 @@ class PlayerService {
   /// 同步当前歌词行到媒体通知（车机显示）
   void _updateMediaLyric(Duration pos) {
     if (_mediaLyricLines.isEmpty || _mediaHandler == null) return;
-    // 从上次找到的位置继续搜索，避免长歌曲时每次都从头遍历
     // 单调递增：pos 单调推进，idx 也单调推进或不变
-    int start = _lastMediaLyricIndex < 0 ? 0 : _lastMediaLyricIndex;
-    int idx = _lastMediaLyricIndex;
+    // 但用户可能 seek 后退 → 检测 pos < 当前行起始时间 → 从头搜索
+    int start;
+    int idx;
     final n = _mediaLyricLines.length;
+    if (_lastMediaLyricIndex >= 0 &&
+        _lastMediaLyricIndex < n &&
+        pos >= _mediaLyricLines[_lastMediaLyricIndex].time) {
+      // 正常前进：从上次位置继续
+      start = _lastMediaLyricIndex;
+      idx = _lastMediaLyricIndex;
+    } else {
+      // seek 后退或初始化：从头搜索
+      start = 0;
+      idx = -1;
+    }
     while (start < n && pos >= _mediaLyricLines[start].time) {
       idx = start;
       start++;

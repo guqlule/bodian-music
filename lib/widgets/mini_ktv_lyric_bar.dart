@@ -92,11 +92,21 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar>
     }
   }
 
-  // 当前行索引（从上次位置开始搜索，长歌曲时减少遍历）
+  // 当前行索引（从上次位置开始搜索，长歌曲时减少遍历；seek 后退自动重置）
   int _findIndex(Duration pos) {
-    int idx = _lastIndex < 0 ? -1 : _lastIndex;
-    int start = idx < 0 ? 0 : idx;
     final n = _lyrics.length;
+    int start;
+    int idx;
+    if (_lastIndex >= 0 &&
+        _lastIndex < n &&
+        pos >= _lyrics[_lastIndex].time) {
+      start = _lastIndex;
+      idx = _lastIndex;
+    } else {
+      // seek 后退或初始化：从头搜索
+      start = 0;
+      idx = -1;
+    }
     while (start < n && pos >= _lyrics[start].time) {
       idx = start;
       start++;

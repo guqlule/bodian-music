@@ -78,9 +78,19 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
   }
 
   int _findIndex(Duration pos) {
-    int idx = _lastIdx < 0 ? -1 : _lastIdx;
-    int start = idx < 0 ? 0 : idx;
     final n = _lyrics.length;
+    int start;
+    int idx;
+    if (_lastIdx >= 0 &&
+        _lastIdx < n &&
+        pos >= _lyrics[_lastIdx].time) {
+      start = _lastIdx;
+      idx = _lastIdx;
+    } else {
+      // seek 后退或初始化：从头搜索
+      start = 0;
+      idx = -1;
+    }
     while (start < n && pos >= _lyrics[start].time) {
       idx = start;
       start++;
