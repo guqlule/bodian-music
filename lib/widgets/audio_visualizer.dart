@@ -1033,17 +1033,21 @@ class _FlamePainter extends CustomPainter {
 
     for (final e in state._embers) {
       final alpha = e.life.clamp(0.0, 1.0);
-      // 火星：白 → 黄 → 橙
-      final color = Color.lerp(
-        Colors.white,
-        const Color(0xFFFFAA22),
-        1.0 - alpha,
-      )!;
+      // 火星：白 → 黄 → 橙（直接 int 运算，避开 Color.lerp 的中间分配）
+      final t = 1.0 - alpha;
+      final er = (0xFF * (1 - t) + 0xFF * t).round(); // 255 → 255 (白→黄)
+      final eg = (0xFF * (1 - t) + 0xAA * t).round(); // 255 → 170
+      final eb = (0xFF * (1 - t) + 0x22 * t).round(); // 255 → 34
       // 外晕
-      _flameEmberPaint.color = color.withValues(alpha: alpha * 0.06);
+      _flameEmberPaint.color = Color.fromARGB(
+        ((alpha * 0.06) * 255).round(), er, eg, eb,
+      );
       canvas.drawCircle(Offset(e.x, e.y), e.size * 4 * alpha, _flameEmberPaint);
       // 内核
-      _flameEmberPaint.color = color.withValues(alpha: alpha * 0.9);
+      // 内核（直接修改画笔颜色）
+      _flameEmberPaint.color = Color.fromARGB(
+        ((alpha * 0.9) * 255).round(), er, eg, eb,
+      );
       canvas.drawCircle(Offset(e.x, e.y), e.size * alpha, _flameEmberPaint);
     }
 
