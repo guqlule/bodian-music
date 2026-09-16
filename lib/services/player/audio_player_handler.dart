@@ -32,11 +32,28 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   }
 
   StreamSubscription? _playbackSub;
+  Timer? _posRefreshTimer;
 
   void _bindPlayerState() {
     _playbackSub = _player.playbackEventStream.listen((event) {
       _broadcastState();
+      _updatePosRefreshTimer();
     });
+  }
+
+  /// 古早车机蓝牙只在 playbackState position 变化时才刷新显示。
+  /// 启动一个 500ms 定时器持续推 position，强制车机"看到"位置在动。
+  /// 播放时启用，暂停/停止时停掉，节省资源。
+  void _updatePosRefreshTimer() {
+    if (_player.playing) {
+      _posRefreshTimer ??= Timer.periodic(
+        const Duration(milliseconds: 500),
+        (_) => _broadcastState(),
+      );
+    } else {
+      _posRefreshTimer?.cancel();
+      _posRefreshTimer = null;
+    }
   }
 
   void cancelPlaybackSubscription() {
@@ -242,11 +259,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> play() async {
     await _player.play();
+    _updatePosRefreshTimer();
   }
 
   @override
   Future<void> pause() async {
     await _player.pause();
+    _updatePosRefreshTimer();
   }
 
   @override
@@ -266,6 +285,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> stop() async {
+    _posRefreshTimer?.cancel();
+    _posRefreshTimer = null;
     await _player.stop();
     await super.stop();
   }
