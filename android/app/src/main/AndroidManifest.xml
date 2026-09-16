@@ -46,9 +46,9 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- audio_service 前台媒体播放服务（蓝牙/线控/通知栏控制） -->
+        <!-- 自建前台媒体播放服务（替代 audio_service） -->
         <service
-            android:name="com.ryanheise.audioservice.AudioService"
+            android:name=".LxPlaybackService"
             android:foregroundServiceType="mediaPlayback"
             android:exported="true">
             <intent-filter>
@@ -56,7 +56,7 @@
             </intent-filter>
         </service>
         <receiver
-            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:name=".LxMediaButtonReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
