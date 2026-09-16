@@ -34,21 +34,26 @@ Color _beatColor(double alpha) {
   return Color.fromARGB((alpha * 255).round(), warm.r ~/ 1, warm.g ~/ 1, warm.b ~/ 1);
 }
 
-Paint _p(Color c) => Paint()..color = c;
-Paint _pFill(Color c) => Paint()
-  ..color = c
-  ..style = PaintingStyle.fill;
-Paint _pStroke(Color c, double w) => Paint()
-  ..color = c
-  ..style = PaintingStyle.stroke
-  ..strokeWidth = w;
-Paint _pStrokeRound(Color c, double w) => Paint()
-  ..color = c
-  ..style = PaintingStyle.stroke
-  ..strokeWidth = w
-  ..strokeCap = StrokeCap.round;
-
 // 共享缓存 Paint 对象，避免每帧 GC 压力
+// 注意：以下 _p* 函数全部返回**同一个** Paint 实例，仅修改 color/strokeWidth/strokeCap
+// 调用方必须保证不在调用之间持有返回值（Flutter 引擎在 drawXxx 调用前会完成读取）
+Paint _p(Color c) => _fillPaintCache..color = c;
+Paint _pFill(Color c) => _fillPaintCache..color = c;
+Paint _pStroke(Color c, double w) => _strokePaintCache
+  ..color = c
+  ..strokeWidth = w;
+Paint _pStrokeRound(Color c, double w) => _strokeRoundPaintCache
+  ..color = c
+  ..strokeWidth = w;
+
+final Paint _fillPaintCache = Paint();
+final Paint _strokePaintCache = Paint()
+  ..style = PaintingStyle.stroke
+  ..strokeWidth = 1.0;
+final Paint _strokeRoundPaintCache = Paint()
+  ..style = PaintingStyle.stroke
+  ..strokeCap = StrokeCap.round
+  ..strokeWidth = 1.0;
 final Paint _glowPaintCache = Paint()
   ..style = PaintingStyle.stroke
   ..strokeCap = StrokeCap.round
