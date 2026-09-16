@@ -404,21 +404,31 @@ class _BarsPainter extends CustomPainter {
       final x = startX + i * gap;
       final barH = max(2.0, maxBarH * value);
 
-      // 渐变色：底部深色 → 顶部亮色
+      // 渐变色：底部深色 → 顶部亮色（直接 int 运算，避免 Color.lerp 中间分配）
       final t = i / max(1, count - 1);
       final warm = AppColors.isDark ? const Color(0xFFE8A04C) : const Color(0xFFC9884A);
       final cool = AppColors.isDark ? const Color(0xFF64B5F6) : const Color(0xFF5B9BD5);
-      final baseColor = Color.lerp(warm, cool, t)!;
-      final barColor = baseColor.withValues(alpha: 0.6 + value * 0.4);
+      final wr = (warm.r * 255).round();
+      final wg = (warm.g * 255).round();
+      final wb = (warm.b * 255).round();
+      final cr = (cool.r * 255).round();
+      final cg = (cool.g * 255).round();
+      final cb = (cool.b * 255).round();
+      final br = (wr + (cr - wr) * t).round();
+      final bg = (wg + (cg - wg) * t).round();
+      final bb = (wb + (cb - wb) * t).round();
+      final barColor = Color.fromARGB(
+        ((0.6 + value * 0.4) * 255).round(), br, bg, bb,
+      );
 
       // 柱体（渐变填充）
       final barRect = Rect.fromLTWH(x, baseY - barH, barW, barH);
       _barsBarPaint.shader = ui.Gradient.linear(
         Offset(0, baseY), Offset(0, baseY - barH),
         [
-          barColor.withValues(alpha: 0.4),
-          barColor,
-          barColor.withValues(alpha: 0.9),
+          Color.fromARGB(((0.6 + value * 0.4) * 0.4 * 255).round(), br, bg, bb),
+          Color.fromARGB(((0.6 + value * 0.4) * 255).round(), br, bg, bb),
+          Color.fromARGB(((0.6 + value * 0.4) * 0.9 * 255).round(), br, bg, bb),
         ],
         [0.0, 0.6, 1.0],
       );
@@ -459,14 +469,16 @@ class _BarsPainter extends CustomPainter {
       // 峰值发光点
       final peak = state._peaks.length > fi ? state._peaks[fi] : value;
       final peakY = baseY - max(2.0, maxBarH * peak) - 6;
-      final peakColor = baseColor.withValues(alpha: 0.9);
+      // 直接计算 peakColor 颜色（避开 withValues 分配）
+      final peakA = ((0.6 + value * 0.4) * 0.9 * 255).round();
+      final peakColor = Color.fromARGB(peakA, br, bg, bb);
       // 辉光（无 blur）
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(x - 3, peakY - 2, barW + 6, 7),
           const Radius.circular(3.5),
         ),
-        _pFill(peakColor.withValues(alpha: 0.30)),
+        _pFill(Color.fromARGB(((0.6 + value * 0.4) * 0.30 * 255).round(), br, bg, bb)),
       );
       // 实心点
       canvas.drawRRect(
