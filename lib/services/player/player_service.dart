@@ -306,7 +306,20 @@ class PlayerService {
 
   /// 同步当前歌词行到媒体通知（车机显示）
   void _updateMediaLyric(Duration pos) {
-    if (_mediaLyricLines.isEmpty || _mediaHandler == null) return;
+    if (_mediaLyricLines.isEmpty) return;
+    // handler 未就绪则延迟调用
+    if (_mediaHandler == null) {
+      _mediaSessionReady.future.then((_) {
+        if (_mediaLyricLines.isNotEmpty) {
+          _doUpdateMediaLyric(pos);
+        }
+      }).catchError((_) {});
+      return;
+    }
+    _doUpdateMediaLyric(pos);
+  }
+
+  void _doUpdateMediaLyric(Duration pos) {
     // 单调递增：pos 单调推进，idx 也单调推进或不变
     // 但用户可能 seek 后退 → 检测 pos < 当前行起始时间 → 从头搜索
     int start;
