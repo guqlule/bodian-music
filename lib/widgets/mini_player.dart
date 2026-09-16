@@ -6,6 +6,9 @@ import '../../providers/app_providers.dart';
 
 /// 迷你播放器 —— 底部悬浮条，显示当前播放歌曲信息和基本控制
 /// 在搜索、设置、歌单等子页面底部自动显示
+///
+/// 性能优化：进度条使用独立的 _MiniProgressBar 子组件（只监听 position）
+/// 主 widget 只在歌曲/播放状态变化时重建，不再每200ms重建一次
 class MiniPlayer extends ConsumerWidget {
   final VoidCallback? onTap;
 
@@ -17,8 +20,6 @@ class MiniPlayer extends ConsumerWidget {
     if (music == null) return const SizedBox.shrink();
 
     final isPlaying = ref.watch(isPlayingProvider).valueOrNull ?? false;
-    final position = ref.watch(positionProvider).valueOrNull ?? Duration.zero;
-    final duration = ref.watch(durationProvider).valueOrNull ?? Duration.zero;
 
     return GestureDetector(
       onTap: onTap,
@@ -36,15 +37,8 @@ class MiniPlayer extends ConsumerWidget {
         ),
         child: Column(
           children: [
-            // 进度条
-            LinearProgressIndicator(
-              value: duration.inMilliseconds > 0
-                  ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
-                  : 0.0,
-              minHeight: 2,
-              backgroundColor: AppColors.divider,
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-            ),
+            // 进度条：独立组件，只在 position/duration 变化时重建
+            const _MiniProgressBar(),
             // 内容
             Expanded(
               child: Padding(
@@ -139,6 +133,51 @@ class MiniPlayer extends ConsumerWidget {
     return Container(
       color: AppColors.primarySoftColor,
       child: Icon(Icons.music_note_rounded, color: AppColors.primary, size: 20),
+    );
+  }
+}
+
+/// 独立的迷你进度条组件 ——使用 ref.listen + setState 局部更新
+/// 不再随主 MiniPlayer 每200ms rebuild 整个封面/歌名/控制按钮树
+class _MiniProgressBar extends ConsumerStatefulWidget {
+  const _MiniProgressBar();
+
+  @override
+  ConsumerState<_MiniProgressBar> createState() => _MiniProgressBarState();
+}
+
+class _MiniProgressBarState extends ConsumerState<_MiniProgressBar> {
+  Duration _pos = Duration.zero;
+  Duration? _dur;
+
+  @override
+  void initState() {
+    super.initState();
+    _pos = ref.read(positionProvider).valueOrNull ?? Duration.zero;
+    _dur = ref.read(durationProvider).valueOrNull;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.listen<AsyncValue<Duration>>(positionProvider, (prev, next) {
+        final v = next.valueOrNull;
+        if (v != null && mounted) setState(() => _pos = v);
+      });
+      ref.listen<AsyncValue<Duration?>>(durationProvider, (prev, next) {
+        final v = next.valueOrNull;
+        if (mounted) setState(() => _dur = v);
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final value = (_dur != null && _dur!.inMilliseconds > 0)
+        ? (_pos.inMilliseconds / _dur!.inMilliseconds).clamp(0.0, 1.0)
+        : 0.0;
+    return LinearProgressIndicator(
+      value: value,
+      minHeight: 2,
+      backgroundColor: AppColors.divider,
+      valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
     );
   }
 }
