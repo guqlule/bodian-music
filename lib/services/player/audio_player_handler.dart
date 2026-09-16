@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import '../../models/music_model.dart';
+import '../platform/media_session_service.dart';
 
 /// 音频后台服务 handler
 /// 创建 Android MediaSession，让蓝牙耳机/车载通过 AVRCP 控制播放
@@ -138,6 +139,15 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       // 关键：同时推 playback state（带 position 微调）
       // 车机 Bluetooth.apk 只在 playback state 变化时重新读取 metadata
       _broadcastState(positionOffset: 1);
+      // 同步推原生 MediaSession metadata（绕过 audio_service，
+      // 直接通过反射调用 MediaSession.setMetadata，强制车机刷新）
+      // 这是洛雪音乐 / 小Q 使用的核心机制
+      MediaSessionService().updateLyric(
+        title: hasLine ? line! : cur.title,
+        artist: cur.artist ?? '',
+        album: cur.album ?? '',
+        lyric: text,
+      );
     } catch (_) {}
   }
 
