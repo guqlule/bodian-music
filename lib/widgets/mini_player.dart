@@ -147,31 +147,13 @@ class _MiniProgressBar extends ConsumerStatefulWidget {
 }
 
 class _MiniProgressBarState extends ConsumerState<_MiniProgressBar> {
-  Duration _pos = Duration.zero;
-  Duration? _dur;
-
-  @override
-  void initState() {
-    super.initState();
-    _pos = ref.read(positionProvider).valueOrNull ?? Duration.zero;
-    _dur = ref.read(durationProvider).valueOrNull;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      ref.listen<AsyncValue<Duration>>(positionProvider, (prev, next) {
-        final v = next.valueOrNull;
-        if (v != null && mounted) setState(() => _pos = v);
-      });
-      ref.listen<AsyncValue<Duration?>>(durationProvider, (prev, next) {
-        final v = next.valueOrNull;
-        if (mounted) setState(() => _dur = v);
-      });
-    });
-  }
-
+  // 仅用 ref.watch 触发重建，移除冗余的 ref.listen + setState
   @override
   Widget build(BuildContext context) {
-    final value = (_dur != null && _dur!.inMilliseconds > 0)
-        ? (_pos.inMilliseconds / _dur!.inMilliseconds).clamp(0.0, 1.0)
+    final pos = ref.watch(positionProvider).valueOrNull ?? Duration.zero;
+    final dur = ref.watch(durationProvider).valueOrNull;
+    final value = (dur != null && dur.inMilliseconds > 0)
+        ? (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0)
         : 0.0;
     return LinearProgressIndicator(
       value: value,

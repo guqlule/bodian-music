@@ -1253,28 +1253,7 @@ class _HomeProgressBar extends ConsumerStatefulWidget {
 }
 
 class _HomeProgressBarState extends ConsumerState<_HomeProgressBar> {
-  Duration _pos = Duration.zero;
-  Duration? _dur;
-
-  @override
-  void initState() {
-    super.initState();
-    _pos = ref.read(positionProvider).valueOrNull ?? Duration.zero;
-    _dur = ref.read(durationProvider).valueOrNull;
-    // 延迟一帧再启动监听，确保不丢失首次事件
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      ref.listen<AsyncValue<Duration>>(positionProvider, (prev, next) {
-        final v = next.valueOrNull;
-        if (v != null && mounted) setState(() => _pos = v);
-      });
-      ref.listen<AsyncValue<Duration?>>(durationProvider, (prev, next) {
-        final v = next.valueOrNull;
-        if (mounted) setState(() => _dur = v);
-      });
-    });
-  }
-
+  // 仅用 ref.watch 触发重建，移除冗余的 ref.listen + setState
   String _fmt(Duration d) {
     final m = d.inMinutes.remainder(60);
     final s = d.inSeconds.remainder(60);
@@ -1283,21 +1262,18 @@ class _HomeProgressBarState extends ConsumerState<_HomeProgressBar> {
 
   @override
   Widget build(BuildContext context) {
-    // 每次 build 都从 provider 取最新值，防止 ref.listen 漏掉
-    final latestPos = ref.watch(positionProvider).valueOrNull ?? _pos;
-    final latestDur = ref.watch(durationProvider).valueOrNull ?? _dur;
-    if (latestPos != _pos) _pos = latestPos;
-    if (latestDur != _dur) _dur = latestDur;
+    final pos = ref.watch(positionProvider).valueOrNull ?? Duration.zero;
+    final dur = ref.watch(durationProvider).valueOrNull;
 
-    final maxMs = (_dur?.inMilliseconds ?? 0).toDouble().clamp(1.0, double.infinity);
-    final posMs = _pos.inMilliseconds.toDouble().clamp(0.0, maxMs);
+    final maxMs = (dur?.inMilliseconds ?? 0).toDouble().clamp(1.0, double.infinity);
+    final posMs = pos.inMilliseconds.toDouble().clamp(0.0, maxMs);
     final thumbR = widget.compact ? 6.0 : 5.0;
     final trackH = widget.compact ? 3.0 : 2.5;
     final fontSize = widget.compact ? 10.0 : 10.0;
 
     return Row(
       children: [
-        Text(_fmt(_pos), style: TextStyle(color: AppColors.textHint, fontSize: fontSize)),
+        Text(_fmt(pos), style: TextStyle(color: AppColors.textHint, fontSize: fontSize)),
         Expanded(
           child: SliderTheme(
             data: SliderThemeData(
@@ -1315,7 +1291,7 @@ class _HomeProgressBarState extends ConsumerState<_HomeProgressBar> {
             ),
           ),
         ),
-        Text(_dur != null ? '-${_fmt(_dur! - _pos)}' : '-:--',
+        Text(dur != null ? '-${_fmt(dur - pos)}' : '-:--',
           style: TextStyle(color: AppColors.textHint, fontSize: fontSize)),
       ],
     );
