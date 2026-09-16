@@ -24,6 +24,7 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar>
 
   List<LyricLine> _lyrics = [];
   String _lyricKey = '';
+  int _lastIndex = -1; // 上次歌词行索引，用于 _findIndex 从此位置继续搜索
 
   // 位置基准点（流更新）+ 播放状态，用于帧间外推
   Duration _basePos = Duration.zero;
@@ -84,22 +85,23 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar>
     if (key == _lyricKey) return;
     _lyricKey = key;
     _lyrics = LyricParser.parse(lyricText);
+    _lastIndex = -1; // 重置搜索起点
     // 歌词到达后重启 ticker（空歌词时被暂停过）
     if (_lyrics.isNotEmpty && _playing && _ticker != null && !_ticker!.isActive) {
       _ticker!.start();
     }
   }
 
-  // 当前行索引
+  // 当前行索引（从上次位置开始搜索，长歌曲时减少遍历）
   int _findIndex(Duration pos) {
-    int idx = -1;
-    for (int i = 0; i < _lyrics.length; i++) {
-      if (pos >= _lyrics[i].time) {
-        idx = i;
-      } else {
-        break;
-      }
+    int idx = _lastIndex < 0 ? -1 : _lastIndex;
+    int start = idx < 0 ? 0 : idx;
+    final n = _lyrics.length;
+    while (start < n && pos >= _lyrics[start].time) {
+      idx = start;
+      start++;
     }
+    _lastIndex = idx;
     return idx;
   }
 
@@ -152,6 +154,7 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar>
       if (prev?.valueOrNull?.id != next.valueOrNull?.id) {
         _lyricKey = '';
         _lyrics = [];
+        _lastIndex = -1;
         _tryParseLyric(ref.read(lyricProvider).valueOrNull);
         if (mounted) setState(() {});
       }

@@ -17,6 +17,7 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
     with SingleTickerProviderStateMixin {
   List<LyricLine> _lyrics = [];
   String _lyricKey = '';
+  int _lastIdx = -1; // 上次歌词行索引
   Duration _basePos = Duration.zero;
   DateTime _basePosTime = DateTime.now();
   bool _playing = false;
@@ -73,14 +74,18 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
     if (key == _lyricKey) return;
     _lyricKey = key;
     _lyrics = LyricParser.parse(lyricText);
+    _lastIdx = -1; // 重置搜索起点
   }
 
   int _findIndex(Duration pos) {
-    int idx = -1;
-    for (int i = 0; i < _lyrics.length; i++) {
-      if (pos >= _lyrics[i].time) idx = i;
-      else break;
+    int idx = _lastIdx < 0 ? -1 : _lastIdx;
+    int start = idx < 0 ? 0 : idx;
+    final n = _lyrics.length;
+    while (start < n && pos >= _lyrics[start].time) {
+      idx = start;
+      start++;
     }
+    _lastIdx = idx;
     return idx;
   }
 
@@ -113,6 +118,7 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
       if (prev?.valueOrNull?.id != next.valueOrNull?.id) {
         _lyricKey = '';
         _lyrics = [];
+        _lastIdx = -1;
         _tryParseLyric(ref.read(lyricProvider).valueOrNull);
       }
     });
