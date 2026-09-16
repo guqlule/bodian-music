@@ -1029,10 +1029,9 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
   // 全屏频谱动画
   Widget _buildFullSpectrumVisualizer(bool playing) {
     final audioAnalysis = ref.read(audioAnalysisProvider);
-    // 缓存的可视化器：effect/playing 变化通过 didUpdateWidget 生效（不重建、不丢订阅）
-    // 仅当缓存为空或 key 不匹配时才创建新实例
-    final shouldCreate = _cachedVisualizer == null ||
-        _cachedVisualizer!.key != ValueKey('viz_${_currentEffect.name}');
+    // 缓存的可视化器：effect 变化才创建新实例，playing 变化通过 didUpdateWidget 生效
+    final cached = _cachedVisualizer;
+    final shouldCreate = cached is! AudioVisualizer || cached.effect != _currentEffect;
     if (shouldCreate) {
       _cachedVisualizer = AudioVisualizer(
         key: ValueKey('viz_${_currentEffect.name}'),
