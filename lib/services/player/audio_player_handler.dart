@@ -20,6 +20,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   String _baseMediaId = '';
   DateTime _lastLyricPush = DateTime(0);
   String? _lastLyricText;
+  int _lyricSeq = 0; // 歌词序号：微调 mediaId 强制车机重新读取 metadata
 
   AudioPlayerHandler({
     required AudioPlayer player,
@@ -51,6 +52,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     }
     _baseMediaId = music.id;
     _lastLyricText = null;
+    _lyricSeq = 0;
     try {
       final subtitle = '${music.singer} · ${music.album}';
       Uri? artUri;
@@ -112,9 +114,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final hasLine = line != null && line.isNotEmpty;
       final cur = _currentItem!;
 
+      // 微调 mediaId 后缀强制车机重新读取 metadata
+      // 不同车机对 mediaId 变化敏感程度不同，加序号确保触发
+      _lyricSeq++;
       final updatedItem = MediaItem(
-        // mediaId 保持不变 → 车机不视为切歌
-        id: _baseMediaId,
+        id: '$_baseMediaId#$_lyricSeq',
         // title 放歌词 → 灵动岛/车机 AVRCP 读取
         title: hasLine ? line : cur.title,
         // artist 保持原歌手名
