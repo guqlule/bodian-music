@@ -1030,16 +1030,21 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
   Widget _buildFullSpectrumVisualizer(bool playing) {
     final audioAnalysis = ref.read(audioAnalysisProvider);
     // 缓存的可视化器：effect/playing 变化通过 didUpdateWidget 生效（不重建、不丢订阅）
-    _cachedVisualizer = AudioVisualizer(
-      key: ValueKey('viz_${_currentEffect.name}'),
-      barCount: 32,
-      effect: _currentEffect,
-      spectrumStream: audioAnalysis.spectrumStream,
-      playing: playing,
-      onNativeStale: _onVizNativeStale,
-      isDataAlive: () => audioAnalysis.isCapturing &&
-          audioAnalysis.lastFftMax > 0.004,
-    );
+    // 仅当缓存为空或 key 不匹配时才创建新实例
+    final shouldCreate = _cachedVisualizer == null ||
+        _cachedVisualizer!.key != ValueKey('viz_${_currentEffect.name}');
+    if (shouldCreate) {
+      _cachedVisualizer = AudioVisualizer(
+        key: ValueKey('viz_${_currentEffect.name}'),
+        barCount: 32,
+        effect: _currentEffect,
+        spectrumStream: audioAnalysis.spectrumStream,
+        playing: playing,
+        onNativeStale: _onVizNativeStale,
+        isDataAlive: () => audioAnalysis.isCapturing &&
+            audioAnalysis.lastFftMax > 0.004,
+      );
+    }
     return Container(
       width: double.infinity,
       height: double.infinity,
