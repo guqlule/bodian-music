@@ -1,53 +1,72 @@
 package com.lxmusic.lx_music_flutter
 
 import android.content.ComponentName
-import android.media.session.MediaController
 import android.media.session.MediaSessionManager
-import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaSessionCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.lang.reflect.Method
 
+/**
+ * 直接更新原生 MediaSession metadata。
+ *
+ * 优化策略：
+ * - 启动时一次性反射拿到 audio_service 内部的 MediaSessionCompat 引用
+ * - 缓存 session 引用 + setMetadata Method 句柄
+ * - 之后每次推歌词只做 method.invoke（缓存的方法句柄），
+ *   **不再每次 getActiveSessions / getMethod**
+ *
+ * 车机蓝牙从 MediaSession metadata 读取歌词显示。
+ */
 class MediaSessionHelper(private val activity: FlutterActivity) {
 
-    private var cachedController: MediaController? = null
-    private var cachedSetMetaMethod: Method? = null
-    private var cachedSetExtrasMethod: Method? = null
+    @Volatile private var cachedSession: MediaSessionCompat? = null
+    @Volatile private var cachedSetMetadata: Method? = null
+    @Volatile private var cachedGetController: Method? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private fun getController(): MediaController? {
-        val msm = activity.getSystemService(FlutterActivity.MEDIA_SESSION_SERVICE) as? MediaSessionManager
-            ?: return null
-        val cn = ComponentName(activity, "com.ryanheise.audioservice.AudioService")
-        val controllers = msm.getActiveSessions(cn)
-        if (controllers.isNullOrEmpty()) {
-            cachedController = null
-            cachedSetMetaMethod = null
-            cachedSetExtrasMethod = null
+    /**
+     * 反射一次性拿到 audio_service.AudioService.instance 里的 mediaSession 字段。
+     * 由于 audio_service 把媒体会话藏在私有字段里，外部访问只能走反射。
+     */
+    private fun tryGetAudioServiceSession(): MediaSessionCompat? {
+        try {
+            val audioServiceCls = Class.forName("com.ryanheise.audioservice.AudioService")
+            val instanceField = audioServiceCls.getDeclaredField("instance")
+            instanceField.isAccessible = true
+            val instance = instanceField.get(null) ?: return null
+            if (instance !is android.app.Service) return null
+
+            val sessionField = audioServiceCls.getDeclaredField("mediaSession")
+            sessionField.isAccessible = true
+            val session = sessionField.get(instance) as? MediaSessionCompat ?: return null
+
+            // 缓存 setMetadata / getController 方法句柄
+            cachedSetMetadata = session.javaClass.getMethod(
+                "setMetadata", MediaMetadataCompat::class.java
+            )
+            cachedGetController = session.javaClass.getMethod("getController")
+            return session
+        } catch (e: Exception) {
             return null
         }
-        val ctrl = controllers[0]
-        if (ctrl !== cachedController) {
-            cachedController = ctrl
-            cachedSetMetaMethod = null
-            cachedSetExtrasMethod = null
-        }
-        return ctrl
     }
 
-    private fun getSetMetaMethod(ctrl: MediaController): Method? {
-        cachedSetMetaMethod?.let { return it }
+    /**
+     * 兜底：通过 MediaSessionManager.getActiveSessions() 拿 MediaController，
+     * 然后用反射 setMetadata（兼容没有 audio_service 的情况，比如未来完全迁移走）
+     */
+    private fun getController(): android.media.session.MediaController? {
         return try {
-            ctrl.javaClass.getMethod("setMetadata", android.media.MediaMetadata::class.java)
-                .also { cachedSetMetaMethod = it }
-        } catch (_: Exception) { null }
-    }
-
-    private fun getSetExtrasMethod(ctrl: MediaController): Method? {
-        cachedSetExtrasMethod?.let { return it }
-        return try {
-            ctrl.javaClass.getMethod("setExtras", Bundle::class.java)
-                .also { cachedSetExtrasMethod = it }
+            val msm = activity.getSystemService(FlutterActivity.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+                ?: return null
+            val cn = ComponentName(activity, "com.ryanheise.audioservice.AudioService")
+            val sessions = msm.getActiveSessions(cn)
+            if (sessions.isNullOrEmpty()) null else sessions[0]
         } catch (_: Exception) { null }
     }
 
@@ -60,35 +79,48 @@ class MediaSessionHelper(private val activity: FlutterActivity) {
                     val album = call.argument<String>("album") ?: ""
                     val lyric = call.argument<String>("lyric") ?: ""
 
-                    val ctrl = getController()
-                    if (ctrl == null) {
-                        result.success(false)
-                        return
-                    }
+                    val meta = MediaMetadataCompat.Builder()
+                        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+                        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+                        .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
+                        .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
+                        .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, artist)
+                        .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
+                        .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, title)
+                        .build()
 
-                    // 1. 更新 metadata
-                    getSetMetaMethod(ctrl)?.let { method ->
-                        val meta = android.media.MediaMetadata.Builder()
-                            .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, title)
-                            .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, artist)
-                            .putString(android.media.MediaMetadata.METADATA_KEY_ALBUM, album)
-                            .putString("android.media.metadata.DISPLAY_TITLE", title)
-                            .putString("android.media.metadata.DISPLAY_SUBTITLE", artist)
-                            .putString("android.media.metadata.DISPLAY_DESCRIPTION", album)
-                            .build()
-                        method.invoke(ctrl, meta)
-                    }
+                    var success = false
 
-                    // 2. 更新 extras（歌词）
-                    getSetExtrasMethod(ctrl)?.let { method ->
-                        val extras = Bundle().apply {
-                            putString("lyric", lyric)
-                            putString("android.intent.extra.TEXT", lyric)
+                    // 路径 1：audio_service 的 MediaSession（公开 API）
+                    if (cachedSession == null) {
+                        cachedSession = tryGetAudioServiceSession()
+                    }
+                    val session = cachedSession
+                    if (session != null) {
+                        try {
+                            cachedSetMetadata?.invoke(session, meta)
+                            success = true
+                        } catch (e: Exception) {
+                            cachedSession = null
+                            cachedSetMetadata = null
                         }
-                        method.invoke(ctrl, extras)
                     }
 
-                    result.success(true)
+                    // 路径 2（兜底）：MediaSessionManager 拿 MediaController + 反射
+                    if (!success) {
+                        val ctrl = getController()
+                        if (ctrl != null) {
+                            try {
+                                val setMeta = ctrl.javaClass.getMethod(
+                                    "setMetadata", MediaMetadataCompat::class.java
+                                )
+                                setMeta.invoke(ctrl, meta)
+                                success = true
+                            } catch (_: Exception) {}
+                        }
+                    }
+
+                    result.success(success)
                 } catch (e: Exception) {
                     result.error("MEDIA_ERROR", e.message, null)
                 }
