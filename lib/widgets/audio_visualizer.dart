@@ -701,7 +701,11 @@ class _RingPainter extends CustomPainter {
       }
       wave.life -= 0.016;
     }
-    state._shockwaves.removeWhere((w) => w.life <= 0);
+    // 反向遍历就地移除死亡元素（避免 removeWhere 闭包分配）
+    final sw = state._shockwaves;
+    for (int i = sw.length - 1; i >= 0; i--) {
+      if (sw[i].life <= 0) sw.removeAt(i);
+    }
 
     // 外圈频率刻度（更细、更密）
     for (int i = 0; i < 48; i++) {
@@ -844,7 +848,10 @@ class _ParticlePainter extends CustomPainter {
       p.vy *= 0.965;
       p.life -= 0.016 / p.maxLife;
     }
-    state._particles.removeWhere((p) => p.life <= 0);
+    final ps = state._particles;
+    for (int i = ps.length - 1; i >= 0; i--) {
+      if (ps[i].life <= 0) ps.removeAt(i);
+    }
 
     // 绘制爆发粒子
     for (final p in state._particles) {
@@ -1021,7 +1028,10 @@ class _FlamePainter extends CustomPainter {
       e.vx *= 0.99;
       e.life -= 0.02 / e.maxLife;
     }
-    state._embers.removeWhere((e) => e.life <= 0);
+    final em = state._embers;
+    for (int i = em.length - 1; i >= 0; i--) {
+      if (em[i].life <= 0) em.removeAt(i);
+    }
 
     for (final e in state._embers) {
       final alpha = e.life.clamp(0.0, 1.0);
@@ -1058,7 +1068,10 @@ class _FlamePainter extends CustomPainter {
       s.life -= 0.008;
       s.opacity *= 0.995;
     }
-    state._smokeWisps.removeWhere((s) => s.life <= 0);
+    final sm = state._smokeWisps;
+    for (int i = sm.length - 1; i >= 0; i--) {
+      if (sm[i].life <= 0) sm.removeAt(i);
+    }
 
     for (final s in state._smokeWisps) {
       final alpha = s.life.clamp(0.0, 1.0) * s.opacity;
@@ -1341,7 +1354,10 @@ class _WaterPainter extends CustomPainter {
       r.radius += 1.5 + spectrum.bass * 1.0;
       r.life -= 0.01;
     }
-    state._ripples.removeWhere((r) => r.life <= 0);
+    final rp = state._ripples;
+    for (int i = rp.length - 1; i >= 0; i--) {
+      if (rp[i].life <= 0) rp.removeAt(i);
+    }
 
     for (final r in state._ripples) {
       final alpha = r.life.clamp(0.0, 1.0);
@@ -1423,7 +1439,10 @@ class _WaterPainter extends CustomPainter {
       b.wobble = sin(frame * 0.1 + b.x * 0.05) * 2;
       b.life -= 0.004;
     }
-    state._bubbles.removeWhere((b) => b.life <= 0 || b.y < 0);
+    final bb = state._bubbles;
+    for (int i = bb.length - 1; i >= 0; i--) {
+      if (bb[i].life <= 0 || bb[i].y < 0) bb.removeAt(i);
+    }
 
     for (final b in state._bubbles) {
       final alpha = b.life.clamp(0.0, 1.0);
@@ -1466,7 +1485,10 @@ class _WaterPainter extends CustomPainter {
       d.vy += 0.15; // 重力
       d.life -= 0.025;
     }
-    state._waterDrops.removeWhere((d) => d.life <= 0);
+    final wd = state._waterDrops;
+    for (int i = wd.length - 1; i >= 0; i--) {
+      if (wd[i].life <= 0) wd.removeAt(i);
+    }
 
     final dropColor = HSVColor.fromAHSV(1.0, 200, 0.4, 0.85).toColor();
     for (final d in state._waterDrops) {
