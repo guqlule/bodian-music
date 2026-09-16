@@ -93,19 +93,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     mediaItem.add(updatedItem);
   }
 
-  /// 更新歌词行 — 通过 audio_service 的 mediaItem 推送到 MediaSession metadata
-  /// audio_service 会将 title/artist/displayDescription 写入 MediaSession metadata，
-  /// 蓝牙 AVRCP / 车机从这些字段读取歌词
-  ///
-  /// 车机蓝牙歌词刷新策略（参考 androidx/media Issue #430 + 小Q/洛雪音乐）：
-  /// - 车机的 Bluetooth.apk 只有在 playback state 变化时才重新读取 metadata
-  /// - 单纯推 metadata 变化，车机不会刷新显示
-  /// - 所以每次推歌词时，同时推 playback state（position 微调），触发车机重新读取
-  /// - **仅在歌词行实际变化时推**（小Q/洛雪音乐的做法），不做时间节流
-  /// - 歌词行通常 3-8 秒一行，避免每秒强制刷新
+  /// 更新歌词行 — 直接通过原生 MediaSession Helper 更新 metadata + extras，
+  /// 不经过 audio_service 的 mediaItem.add()，避免 notification rebuild 导致卡顿。
+  /// 车机蓝牙从 MediaSession metadata 读取歌词显示。
   void updateLyricLine(String? line) {
     if (_currentItem == null) return;
-    // 歌词没变就不推（但允许从有到无、从无到有的切换）
     final text = line ?? '';
     if (text == _lastLyricText) return;
     _lastLyricText = text;
@@ -115,14 +107,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final hasLine = line != null && line.isNotEmpty;
       final cur = _currentItem!;
 
-      // 微调 mediaId 后缀强制车机重新读取 metadata
-      // 不同车机对 mediaId 变化敏感程度不同，加序号确保触发
-      _lyricSeq++;
-      final updatedItem = MediaItem(
-        id: '$_baseMediaId#$_lyricSeq',
-        // title 放歌词 → 灵动岛/车机 AVRCP 读取
+      // 只更新 Dart 侧缓存的 MediaItem（不触发 platform channel）
+      _currentItem = MediaItem(
+        id: _baseMediaId,
         title: hasLine ? line : cur.title,
-        // artist 保持原歌手名
         artist: cur.artist,
         album: cur.album ?? '',
         artUri: cur.artUri,
@@ -130,18 +118,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         displayTitle: hasLine ? line : (cur.displayTitle ?? cur.title),
         displaySubtitle: cur.artist ?? '',
         displayDescription: hasLine ? line : (cur.album ?? ''),
-        extras: {
-          'lyric': line ?? '',
-        },
+        extras: {'lyric': line ?? ''},
       );
-      _currentItem = updatedItem;
-      mediaItem.add(updatedItem);
-      // 关键：同时推 playback state（带 position 微调）
-      // 车机 Bluetooth.apk 只在 playback state 变化时重新读取 metadata
-      _broadcastState(positionOffset: 1);
-      // 同步推原生 MediaSession metadata（绕过 audio_service，
-      // 直接通过反射调用 MediaSession.setMetadata，强制车机刷新）
-      // 这是洛雪音乐 / 小Q 使用的核心机制
+
+      // 轻量原生更新：直接改 MediaSession metadata + extras
+      // 不触发 notification rebuild，不会卡顿
       MediaSessionService().updateLyric(
         title: hasLine ? line! : cur.title,
         artist: cur.artist ?? '',
