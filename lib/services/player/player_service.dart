@@ -140,6 +140,11 @@ class PlayerService {
       if (music != null && (music.source == 'local' || music.source == 'webdav') && duration != null && duration.inMilliseconds > 0) {
         _localMusicService.updateSongDuration(music.id, duration.inMilliseconds);
       }
+      // 实际播放时长已知时，更新 MediaItem 以让灵动岛/车机显示进度条
+      // music.duration 经常为 0（API 未返回），但实际音频有完整时长
+      if (duration != null && duration.inMilliseconds > 0) {
+        _mediaHandler?.updateDuration(duration);
+      }
     }));
 
     _subscriptions.add(_audioPlayer.playerStateStream.listen((state) {

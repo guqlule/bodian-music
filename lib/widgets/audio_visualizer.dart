@@ -192,6 +192,11 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
         _staleNotified = false;
         if (staleMs > 1500) _lastNativeData = DateTime.now().subtract(const Duration(milliseconds: 100));
       }
+    } else {
+      // 未播放时清空模拟，确保下次播放重新触发
+      _simActive = false;
+      _staleNotified = false;
+      _simFreqs = [];
     }
     // 仅在 _spectrum 更新时触发重绘，避免无数据时重复绘制
     if (_dirty) {
@@ -379,6 +384,7 @@ class _BarsPainter extends CustomPainter {
     final w = size.width;
     final h = size.height;
     final freqs = state._spectrum.frequencies;
+    // 空数据时仅画背景（保留 visualizer 占位），不绘制柱体
     if (freqs.isEmpty) return;
 
     final gap = w / (count + 1);

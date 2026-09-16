@@ -78,6 +78,18 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     } catch (_) {}
   }
 
+  /// 更新实际播放时长 — 当 audioService 首次获取到真实时长时调用
+  /// 用于修复 music.duration=0 时灵动岛/车机不显示进度条的问题
+  void updateDuration(Duration duration) {
+    if (_currentItem == null) return;
+    final cur = _currentItem!;
+    // 避免重复推送相同时长
+    if (cur.duration == duration) return;
+    final updatedItem = cur.copyWith(duration: duration);
+    _currentItem = updatedItem;
+    mediaItem.add(updatedItem);
+  }
+
   /// 更新歌词行 — 通过 audio_service 的 mediaItem 推送到 MediaSession metadata
   /// audio_service 会将 title/artist/displayDescription 写入 MediaSession metadata，
   /// 蓝牙 AVRCP / 车机从这些字段读取歌词
