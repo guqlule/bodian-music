@@ -704,10 +704,11 @@ class _RingPainter extends CustomPainter {
       final r = maxR * (0.15 + progress * 1.3);
       final alpha = wave.life.clamp(0.0, 1.0);
       if (alpha > 0.02 && r > 0) {
-        _ringGlowPaint.color = AppColors.primaryDark.withValues(alpha: alpha * 0.4);
+        // 直接 int 运算，避开 withValues 分配（每帧最多 5 个波 × 2 = 10 次）
+        _ringGlowPaint.color = Color.fromARGB((alpha * 0.4 * 255).round(), 0xB0, 0x90, 0x6B);
         canvas.drawCircle(center, r, _ringGlowPaint);
         _ringStrokePaint
-          ..color = AppColors.primaryDark.withValues(alpha: alpha * 0.7)
+          ..color = Color.fromARGB((alpha * 0.7 * 255).round(), 0xB0, 0x90, 0x6B)
           ..strokeWidth = 2.0 * wave.life;
         canvas.drawCircle(center, r, _ringStrokePaint);
       }
