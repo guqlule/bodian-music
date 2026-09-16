@@ -65,58 +65,58 @@ class AppNeumorphic {
       ? Colors.black.withValues(alpha: 0.55)
       : AppColors.cardShadowDark;
 
-  static List<BoxShadow> get light => [
-    BoxShadow(
-      color: _highlight,
-      blurRadius: 16,
-      offset: const Offset(-4, -4),
-    ),
-    BoxShadow(
-      color: _shadow,
-      blurRadius: 16,
-      offset: const Offset(4, 4),
-    ),
-  ];
+  // 缓存：避免每次访问 getter 都创建新的 List<BoxShadow>
+  // 主题切换时 AppColors.isDark 会变，因此缓存按当前主题标记
+  static int _cachedThemeFlag = -1;
+  static late List<BoxShadow> _lightCache;
+  static late List<BoxShadow> _softCache;
+  static late List<BoxShadow> _flatCache;
+  static late List<BoxShadow> _insetCache;
 
-  static List<BoxShadow> get soft => [
-    BoxShadow(
-      color: _highlight,
-      blurRadius: 12,
-      offset: const Offset(-3, -3),
-    ),
-    BoxShadow(
-      color: _shadow,
-      blurRadius: 12,
-      offset: const Offset(3, 3),
-    ),
-  ];
+  static List<BoxShadow> _ensure() {
+    final flag = AppColors.isDark ? 1 : 0;
+    if (_cachedThemeFlag == flag) return _lightCache;
+    _cachedThemeFlag = flag;
+    final hl = _highlight;
+    final sh = _shadow;
+    _lightCache = [
+      BoxShadow(color: hl, blurRadius: 16, offset: const Offset(-4, -4)),
+      BoxShadow(color: sh, blurRadius: 16, offset: const Offset(4, 4)),
+    ];
+    _softCache = [
+      BoxShadow(color: hl, blurRadius: 12, offset: const Offset(-3, -3)),
+      BoxShadow(color: sh, blurRadius: 12, offset: const Offset(3, 3)),
+    ];
+    _flatCache = [
+      BoxShadow(color: hl, blurRadius: 8, offset: const Offset(-2, -2)),
+      BoxShadow(color: sh, blurRadius: 8, offset: const Offset(2, 2)),
+    ];
+    _insetCache = [
+      BoxShadow(color: sh, blurRadius: 6, offset: const Offset(2, 2)),
+      BoxShadow(color: hl, blurRadius: 6, offset: const Offset(-2, -2)),
+    ];
+    return _lightCache;
+  }
 
-  static List<BoxShadow> get flat => [
-    BoxShadow(
-      color: _highlight,
-      blurRadius: 8,
-      offset: const Offset(-2, -2),
-    ),
-    BoxShadow(
-      color: _shadow,
-      blurRadius: 8,
-      offset: const Offset(2, 2),
-    ),
-  ];
+  static List<BoxShadow> get light {
+    _ensure();
+    return _lightCache;
+  }
 
-  // 内凹效果（用于按钮按下等）
-  static List<BoxShadow> get inset => [
-    BoxShadow(
-      color: _shadow,
-      blurRadius: 6,
-      offset: const Offset(2, 2),
-    ),
-    BoxShadow(
-      color: _highlight,
-      blurRadius: 6,
-      offset: const Offset(-2, -2),
-    ),
-  ];
+  static List<BoxShadow> get soft {
+    _ensure();
+    return _softCache;
+  }
+
+  static List<BoxShadow> get flat {
+    _ensure();
+    return _flatCache;
+  }
+
+  static List<BoxShadow> get inset {
+    _ensure();
+    return _insetCache;
+  }
 }
 
 class AppTheme {
