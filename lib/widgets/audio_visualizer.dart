@@ -198,11 +198,9 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
       _staleNotified = false;
       _simFreqs = [];
     }
-    // 仅在 _spectrum 更新时触发重绘，避免无数据时重复绘制
-    if (_dirty) {
-      _dirty = false;
-      _repaint.notifyListeners();
-    }
+    // 始终触发重绘（_frame 改变后 painter 才能读到新的 simPhase）
+    // 之前只在 _dirty=true 时通知，导致无频谱数据时画面冻结
+    _repaint.notifyListeners();
   }
 
   void _updateSim() {
