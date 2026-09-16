@@ -68,6 +68,14 @@ class SettingsScreen extends ConsumerWidget {
                   PlayerService.instance.setPrefetchEnabled(value);
                 },
               ),
+              const _Divider(),
+              _buildSwitchTile(
+                icon: Icons.bluetooth_audio_rounded,
+                title: '蓝牙歌词',
+                subtitle: '向车机/蓝牙耳机推送当前歌词',
+                value: settings.enableBluetoothLyric,
+                onChanged: (value) => settingsNotifier.setBluetoothLyric(value),
+              ),
             ],
           ),
           const SizedBox(height: 16),

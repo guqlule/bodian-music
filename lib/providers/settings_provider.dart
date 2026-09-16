@@ -15,6 +15,7 @@ class AppSettings {
   final String syncHost;
   final int playMode;
   final bool gaplessPlayback;
+  final bool enableBluetoothLyric;
 
   AppSettings({
     this.isDarkMode = false,
@@ -29,6 +30,7 @@ class AppSettings {
     this.enableSync = false,
     this.syncHost = '',
     this.playMode = 0,
+    this.enableBluetoothLyric = true,
   });
 
   AppSettings copyWith({
@@ -44,6 +46,7 @@ class AppSettings {
     bool? enableSync,
     String? syncHost,
     int? playMode,
+    bool? enableBluetoothLyric,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -58,6 +61,7 @@ class AppSettings {
       enableSync: enableSync ?? this.enableSync,
       syncHost: syncHost ?? this.syncHost,
       playMode: playMode ?? this.playMode,
+      enableBluetoothLyric: enableBluetoothLyric ?? this.enableBluetoothLyric,
     );
   }
 
@@ -75,6 +79,7 @@ class AppSettings {
       'enableSync': enableSync,
       'syncHost': syncHost,
       'playMode': playMode,
+      'enableBluetoothLyric': enableBluetoothLyric,
     };
   }
 
@@ -92,6 +97,7 @@ class AppSettings {
       enableSync: json['enableSync'] ?? false,
       syncHost: json['syncHost'] ?? '',
       playMode: json['playMode'] ?? 0,
+      enableBluetoothLyric: json['enableBluetoothLyric'] ?? true,
     );
   }
 }
@@ -178,6 +184,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
 
   void setPlayMode(int mode) {
     state = state.copyWith(playMode: mode);
+    _saveSettings();
+  }
+
+  void setBluetoothLyric(bool enabled) {
+    state = state.copyWith(enableBluetoothLyric: enabled);
     _saveSettings();
   }
 }

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/music_model.dart';
 import '../platform/media_session_service.dart';
 
@@ -34,6 +36,22 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   StreamSubscription? _playbackSub;
   Timer? _posRefreshTimer;
 
+  /// 缓存的"蓝牙歌词"开关。播放期间读取一次，避免 500ms tick 频繁读 SharedPreferences。
+  bool _btLyricCached = true;
+
+  /// 是否启用蓝牙/车机歌词推送。从 SharedPreferences 读取。
+  Future<bool> _readBluetoothLyricEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final json = prefs.getString('app_settings');
+      if (json == null) return true;
+      final map = jsonDecode(json) as Map;
+      return (map['enableBluetoothLyric'] as bool?) ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
   void _bindPlayerState() {
     _playbackSub = _player.playbackEventStream.listen((event) {
       _broadcastState();
@@ -45,7 +63,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   /// 启动一个 500ms 定时器持续推 position，强制车机"看到"位置在动。
   /// 播放时启用，暂停/停止时停掉，节省资源。
   void _updatePosRefreshTimer() {
-    if (_player.playing) {
+    if (_player.playing && _btLyricCached) {
       _posRefreshTimer ??= Timer.periodic(
         const Duration(milliseconds: 500),
         (_) => _broadcastState(),
@@ -119,6 +137,16 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     if (text == _lastLyricText) return;
     _lastLyricText = text;
     _lastLyricPush = DateTime.now();
+
+    // 异步检查设置，开关关闭时直接跳过整个流程
+    unawaited(_readBluetoothLyricEnabled().then((enabled) {
+      _btLyricCached = enabled;
+      if (!enabled) return;
+      _doPushLyric(line, text);
+    }));
+  }
+
+  void _doPushLyric(String? line, String text) {
 
     try {
       final hasLine = line != null && line.isNotEmpty;
@@ -259,6 +287,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> play() async {
     await _player.play();
+    _btLyricCached = await _readBluetoothLyricEnabled();
     _updatePosRefreshTimer();
   }
 
