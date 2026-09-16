@@ -82,21 +82,19 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   /// audio_service 会将 title/artist/displayDescription 写入 MediaSession metadata，
   /// 蓝牙 AVRCP / 车机从这些字段读取歌词
   ///
-  /// 车机蓝牙歌词刷新策略（参考 androidx/media Issue #430）：
+  /// 车机蓝牙歌词刷新策略（参考 androidx/media Issue #430 + QQ音乐/洛雪音乐）：
   /// - 车机的 Bluetooth.apk 只有在 playback state 变化时才重新读取 metadata
   /// - 单纯推 metadata 变化，车机不会刷新显示
   /// - 所以每次推歌词时，同时推 playback state（position 微调），触发车机重新读取
-  /// - 歌词没变时不推，避免无效 IPC
+  /// - **仅在歌词行实际变化时推**（QQ音乐/洛雪音乐的做法），不做时间节流
+  /// - 歌词行通常 3-8 秒一行，避免每秒强制刷新
   void updateLyricLine(String? line) {
     if (_currentItem == null) return;
-    final now = DateTime.now();
-    // 节流：1 秒内不重复推送
-    if (now.difference(_lastLyricPush).inMilliseconds < 1000) return;
     // 歌词没变就不推（但允许从有到无、从无到有的切换）
     final text = line ?? '';
     if (text == _lastLyricText) return;
     _lastLyricText = text;
-    _lastLyricPush = now;
+    _lastLyricPush = DateTime.now();
 
     try {
       final hasLine = line != null && line.isNotEmpty;
