@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:hive/hive.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:rxdart/rxdart.dart';
+import 'package:audio_service/audio_service.dart';
 import 'package:http/http.dart' as http;
 import '../../models/music_model.dart';
 import '../api/music_url_service.dart';
@@ -11,7 +12,7 @@ import '../api/music_search_service.dart';
 import '../api/lyric_api_service.dart';
 import '../lyric/lyric_parser.dart';
 import '../local/local_music_service.dart';
-import 'lx_playback_bridge.dart';
+import 'audio_player_handler.dart';
 import 'player_storage.dart';
 import '../../core/utils/logger.dart';
 
@@ -35,7 +36,7 @@ class PlayerService {
   final MusicUrlService _urlService = MusicUrlService();
   final MusicSearchService _searchService = MusicSearchService();
   final LyricApiService _lyricApiService = LyricApiService();
-  LxPlaybackBridge? _mediaHandler;
+  AudioPlayerHandler? _mediaHandler;
   final Completer<void> _mediaSessionReady = Completer<void>();
   // 音质偏好：始终按最高音质请求，脚本/MusicUrlService 内部会自动降级
   String _preferredQuality = 'flac';
@@ -225,13 +226,22 @@ class PlayerService {
 
   Future<void> _initMediaSession() async {
     try {
-      final bridge = LxPlaybackBridge(
-        player: _audioPlayer,
-        onPlayNext: () => playNext(),
-        onPlayPrevious: () => playPrevious(),
+      final handler = await AudioService.init(
+        builder: () => AudioPlayerHandler(
+          player: _audioPlayer,
+          onPlayNext: () => playNext(),
+          onPlayPrevious: () => playPrevious(),
+        ),
+        config: const AudioServiceConfig(
+          androidNotificationChannelId: 'com.salt.music.playback',
+          androidNotificationChannelName: '音乐播放',
+          androidNotificationIcon: 'mipmap/ic_launcher',
+          androidNotificationOngoing: true,
+          androidStopForegroundOnPause: true,
+        ),
       );
-      bridge.onPlayIndex = (index) => playIndex(index);
-      _mediaHandler = bridge;
+      _mediaHandler = handler;
+      handler.setPlayIndexCallback((index) => playIndex(index));
       if (!_mediaSessionReady.isCompleted) _mediaSessionReady.complete();
 
       // 当前歌曲变化时更新 metadata（队列同步由 combineLatest2 统一处理）
