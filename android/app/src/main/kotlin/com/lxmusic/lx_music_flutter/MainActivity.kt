@@ -11,12 +11,13 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import com.ryanheise.audioservice.AudioServiceActivity
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
 
-class MainActivity : FlutterActivity() {
+class MainActivity : AudioServiceActivity() {
     private val FILE_CHANNEL = "com.lxmusic/file_picker"
     private val EQ_CHANNEL = "com.lxmusic/equalizer"
     private val MEDIA_CHANNEL = "com.lxmusic/media_session"
