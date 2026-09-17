@@ -46,6 +46,23 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- audio_service 前台媒体播放服务（蓝牙/线控/通知栏控制） -->
+        <service
+            android:name="com.ryanheise.audioservice.AudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+        <receiver
+            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
         <!-- HiCar 生命周期广播（车机连接/断开） -->
         <receiver
             android:name=".HiCarReceiver"
