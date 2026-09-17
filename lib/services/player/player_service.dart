@@ -605,6 +605,10 @@ class PlayerService {
     });
   }
 
+  // 异步回调过期守卫：调用方拿到旧的 requestId/lrId 时直接放弃
+  bool _isStaleLoad(int requestId) => _loadRequestId != requestId;
+  bool _isStaleLyric(int lrId) => _lyricRequestId != lrId;
+
   /// 取已预热的备选：in-flight 时等待完成（最多 10s）；缓存完成且未过期直接用
   Future<List<MusicInfo>> _getAltCandidates(MusicInfo music, int requestId) async {
     final key = _altCacheKey(music);
@@ -627,7 +631,7 @@ class PlayerService {
       final started = DateTime.now();
       while (DateTime.now().difference(started) < const Duration(seconds: 2)) {
         await Future.delayed(const Duration(milliseconds: 50));
-        if (_loadRequestId != requestId) return const [];
+        if (_isStaleLoad(requestId)) return const [];
         if (_altCacheTime[key] != null) {
           return _altCandidatesCache[key] ?? const [];
         }
@@ -637,11 +641,11 @@ class PlayerService {
 
     // 立即搜索（对齐原版：失败后立即搜，不依赖预热）
     logDebug('[AltSource] 立即搜索备选源 (${music.name} - ${music.singer})');
-    return _searchAltCandidatesNow(music, requestId);
+    return _runAltSearch(music, requestId);
   }
 
   /// 立即搜索备选源（对齐原版 findMusic：并行搜所有源，匹配排序，返回候选）
-  Future<List<MusicInfo>> _searchAltCandidatesNow(MusicInfo music, int requestId) async {
+  Future<List<MusicInfo>> _runAltSearch(MusicInfo music, int requestId) async {
     final key = _altCacheKey(music);
     // 写占位避免并发
     _altCandidatesCache[key] = const [];
@@ -663,7 +667,7 @@ class PlayerService {
           }).catchError((_) => SearchResult(list: [], total: 0, page: 1, pageSize: 5, source: source)));
       final results = await Future.wait(searchFutures);
 
-      if (_loadRequestId != requestId) return const [];
+      if (_isStaleLoad(requestId)) return const [];
 
       final matched = <MusicInfo>[];
       for (final result in results) {
@@ -780,7 +784,7 @@ class PlayerService {
       }
 
       // 检查请求是否已被取消
-      if (_loadRequestId != requestId) return;
+      if (_isStaleLoad(requestId)) return;
 
       if (url == null || url.isEmpty) {
         // 未激活自定义源时直接抛出，不重试（重试无意义）
@@ -825,10 +829,10 @@ class PlayerService {
       }
 
       // 再次检查请求是否已被取消
-      if (_loadRequestId != requestId) return;
+      if (_isStaleLoad(requestId)) return;
 
       await _audioPlayer.setUrl(url);
-      if (_loadRequestId != requestId) return;
+      if (_isStaleLoad(requestId)) return;
       _audioPlayer.play().catchError((e) {
         logDebug('[Player] play() 失败: $e，尝试 seek(0) + 重播');
         try {
@@ -842,7 +846,7 @@ class PlayerService {
 
       // 防御性重试：如果 1 秒后仍未播放，尝试 seek(0) + 重播
       Future.delayed(const Duration(seconds: 1), () {
-        if (_loadRequestId != requestId) return;
+        if (_isStaleLoad(requestId)) return;
         if (!_isPlayingController.value &&
             _currentMusicController.value?.id == musicWithUrl.id) {
           logDebug('[Player] 1秒后未播放，尝试重新 seek + play');
@@ -870,7 +874,7 @@ class PlayerService {
       _cancelLoadTimeout();
       
       // 只有当请求仍然有效时才处理错误
-      if (_loadRequestId != requestId) return;
+      if (_isStaleLoad(requestId)) return;
       
       // 未激活自定义源，不重试，直接提示
       if (e.toString().contains('NO_SCRIPT')) {
@@ -926,7 +930,7 @@ class PlayerService {
       // 本地歌曲：先读同名 .lrc 文件，无则在线搜索兜底
       if (music.source == 'local') {
         final lyricData = await _localMusicService.getLocalLyric(music);
-        if (_lyricRequestId != lrId) return;
+        if (_isStaleLyric(lrId)) return;
         if (lyricData != null && lyricData['lyric'] != null && lyricData['lyric']!.isNotEmpty) {
           logDebug('[Lyric] 本地歌词成功: ${music.name}');
           _lyricController.add(lyricData);
@@ -937,7 +941,7 @@ class PlayerService {
             final onlineLyric = await _lyricApiService
                 .searchLyricByKeyword(music.name, music.singer)
                 .timeout(const Duration(seconds: 10));
-            if (_lyricRequestId != lrId) return;
+            if (_isStaleLyric(lrId)) return;
             if (onlineLyric != null && onlineLyric['lyric'] != null && onlineLyric['lyric']!.isNotEmpty) {
               logDebug('[Lyric] 本地歌曲在线歌词成功');
               _lyricController.add(onlineLyric);
@@ -964,7 +968,7 @@ class PlayerService {
 
         if (lyricData != null && lyricData['lyric'] != null && lyricData['lyric']!.isNotEmpty) {
           logDebug('[Lyric] 内置API歌词成功');
-          if (_lyricRequestId != lrId) return;
+          if (_isStaleLyric(lrId)) return;
           _lyricController.add(lyricData);
           return;
         }
@@ -979,7 +983,7 @@ class PlayerService {
           lyricData = await _urlService.getLyric(music: music);
           if (lyricData != null && lyricData['lyric'] != null && lyricData['lyric']!.isNotEmpty) {
             logDebug('[Lyric] 用户源歌词成功');
-            if (_lyricRequestId != lrId) return;
+            if (_isStaleLyric(lrId)) return;
             _lyricController.add(lyricData);
             return;
           }
@@ -1008,7 +1012,7 @@ class PlayerService {
     final lrId = _lyricRequestId;
     _fetchLyric(music).then((_) {
       // 歌词到达时检查是否已被新请求取代
-      if (_lyricRequestId != lrId) return;
+      if (_isStaleLyric(lrId)) return;
     }).catchError((_) {});
   }
 
@@ -1110,7 +1114,7 @@ class PlayerService {
       // 取备选（预热命中则 0 等待；否则最多等 10s 现搜）
       final candidates = await _getAltCandidates(music, requestId);
 
-      if (_loadRequestId != requestId) return;
+      if (_isStaleLoad(requestId)) return;
 
       if (candidates.isEmpty) {
         _isLoadingController.add(false);
@@ -1133,7 +1137,7 @@ class PlayerService {
               music: alternative,
               quality: _preferredQuality,
             );
-            if (_loadRequestId != requestId) return;
+            if (_isStaleLoad(requestId)) return;
             if (url != null && url.isNotEmpty && winnerMusic == null) {
               winnerMusic = alternative;
               winnerUrl = url;
@@ -1148,7 +1152,7 @@ class PlayerService {
         });
       } catch (_) {}
 
-      if (_loadRequestId != requestId) return;
+      if (_isStaleLoad(requestId)) return;
 
       final altMusic = winnerMusic;
       final altUrl = winnerUrl;
@@ -1163,7 +1167,7 @@ class PlayerService {
 
         _currentMusicController.add(alternativeWithUrl);
         await _audioPlayer.setUrl(altUrl);
-        if (_loadRequestId != requestId) return;
+        if (_isStaleLoad(requestId)) return;
         _audioPlayer.play();
 
         _addToHistory(alternativeWithUrl);
