@@ -38,10 +38,6 @@ class VisualizerHelper(private val activity: android.app.Activity) {
                 stopCapture()
                 result.success(null)
             }
-            "release" -> {
-                release()
-                result.success(null)
-            }
             "getNativeStatus" -> {
                 val vis = visualizer
                 val status = mapOf(
@@ -160,9 +156,5 @@ class VisualizerHelper(private val activity: android.app.Activity) {
         } catch (_: Exception) {}
         visualizer = null
         currentSessionId = -1
-    }
-
-    private fun release() {
-        stopCapture()
     }
 }
