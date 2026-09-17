@@ -67,6 +67,9 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
     _lyricKey = key;
     _lyrics = LyricParser.parse(lyricText);
     _lastIndex = -1;
+    // 触发 build：仅 _lyrics 字段变化不会让 ConsumerWidget rebuild，
+    // 必须显式 setState。ticker 也会触发 build，但播放前 ticker 没启动。
+    if (mounted) setState(() {});
     if (_lyrics.isNotEmpty && _playing && _ticker == null) {
       _ticker = Timer.periodic(const Duration(milliseconds: 33), (_) {
         if (!mounted) return;
