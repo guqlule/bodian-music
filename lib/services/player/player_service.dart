@@ -831,7 +831,10 @@ class PlayerService {
       // 再次检查请求是否已被取消
       if (_isStaleLoad(requestId)) return;
 
-      await _audioPlayer.setUrl(url);
+      await _audioPlayer.setUrl(url).timeout(const Duration(seconds: 30), onTimeout: () {
+        logDebug('[Player] setUrl 超时 30s');
+        throw TimeoutException('SETURL_TIMEOUT');
+      });
       if (_isStaleLoad(requestId)) return;
       _audioPlayer.play().catchError((e) {
         logDebug('[Player] play() 失败: $e，尝试 seek(0) + 重播');

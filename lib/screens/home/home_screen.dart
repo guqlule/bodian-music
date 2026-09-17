@@ -962,6 +962,7 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
         ),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(music.name, maxLines: 1, overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
