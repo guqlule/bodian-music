@@ -29,10 +29,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _loadRecommendPlaylists();
+    _refreshRecommend();
   }
 
-  Future<void> _loadRecommendPlaylists() async {
+  Future<void> _refreshRecommend() async {
     setState(() => _isLoadingRecommend = true);
     try {
       final playlists = await SonglistService().getRecommendSonglists(page: 1, pageSize: 10);
@@ -41,7 +41,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _recommendPlaylists = playlists;
         _isLoadingRecommend = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() => _isLoadingRecommend = false);
     }
@@ -55,7 +55,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       body: PlayerHomeView(
         recommendPlaylists: _recommendPlaylists,
         isLoadingRecommend: _isLoadingRecommend,
-        onRefreshRecommend: _loadRecommendPlaylists,
+        onRefreshRecommend: _refreshRecommend,
       ),
     );
   }
