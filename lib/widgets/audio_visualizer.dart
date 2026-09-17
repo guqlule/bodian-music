@@ -152,21 +152,12 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
   bool _dirty = false;
 
   void _syncTimer() {
-    if (widget.playing && _timer == null) {
-      // 30fps：音视频谱不需要 60fps，每帧含全屏重绘 + 模糊绘制，30fps 已足够流畅且显著降低 GPU 压力
-      _timer = Timer.periodic(const Duration(milliseconds: 33), (_) {
-        _tick();
-      });
-    } else if (!widget.playing && _timer != null) {
-      _timer?.cancel();
-      _timer = null;
-      _spectrum = SpectrumData.empty;
-      _simFreqs = [];
-      _simActive = false;
-      _staleNotified = false;
-      _dirty = true;
-      _repaint.notifyListeners();
-    }
+    // 30fps：音视频谱不需要 60fps，每帧含全屏重绘 + 模糊绘制，30fps 已足够流畅且显著降低 GPU 压力
+    // 重要：定时器必须**持续运行**，不依赖 widget.playing。
+    // 否则暂停时 _frame 停止递增，sin 兜底模拟动画也会冻结。
+    _timer ??= Timer.periodic(const Duration(milliseconds: 33), (_) {
+      _tick();
+    });
   }
 
   void _tick() {
