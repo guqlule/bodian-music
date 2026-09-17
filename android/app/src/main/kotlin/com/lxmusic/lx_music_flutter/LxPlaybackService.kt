@@ -12,7 +12,7 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 
 /**
- * 自建前台媒体播放服务�? * 替代 audio_service �?AudioService：自己管�?MediaSession、通知、媒体按键、Becoming Noisy�? */
+ * 自建前台媒体播放服务�? * 替代 audio_service �?AudioService：自己管�?MediaSession、通知、媒体按键、Becoming Noisy�? */
 class LxPlaybackService : MediaBrowserServiceCompat() {
 
     companion object {
@@ -44,16 +44,30 @@ class LxPlaybackService : MediaBrowserServiceCompat() {
         LxMediaBridge.attachSession(mediaSession)
 
         becomingNoisyReceiver = LxBecomingNoisyReceiver()
+        val noisyFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            android.content.Context.RECEIVER_NOT_EXPORTED
+        } else {
+            0
+        }
         registerReceiver(
             becomingNoisyReceiver,
-            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            noisyFlag
         )
 
         mediaButtonReceiver = LxMediaButtonReceiver()
         val filter = IntentFilter(Intent.ACTION_MEDIA_BUTTON).apply {
             priority = 1000
         }
-        registerReceiver(mediaButtonReceiver, filter)
+        // Android 13+ (Tiramisu/SDK 33) 要求 registerReceiver 必须显式声明
+        // RECEIVER_EXPORTED 或 RECEIVER_NOT_EXPORTED。MEDIA_BUTTON 来自系统，
+        // 用 NOT_EXPORTED 即可。
+        val receiverFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            android.content.Context.RECEIVER_NOT_EXPORTED
+        } else {
+            0
+        }
+        registerReceiver(mediaButtonReceiver, filter, receiverFlag)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -86,7 +100,7 @@ class LxPlaybackService : MediaBrowserServiceCompat() {
         result.sendResult(mutableListOf())
     }
 
-    /** �?LxMediaBridge �?setMetadata/setPlaybackState/setLyric 后回调�?*/
+    /** �?LxMediaBridge �?setMetadata/setPlaybackState/setLyric 后回调�?*/
     fun onMetadataOrStateChanged() {
         val meta = mediaSession.controller.metadata
         val state = mediaSession.controller.playbackState
