@@ -109,7 +109,6 @@ class PlayerService {
   final PlayerStorage _storage = PlayerStorage();
   final LocalMusicService _localMusicService = LocalMusicService();
   final BehaviorSubject<String> _qualityController = BehaviorSubject<String>.seeded('');
-  String get qualityStreamText => _qualityController.value;
 
   static const int _maxHistorySize = 100;
 
@@ -1457,37 +1456,5 @@ class PlayerService {
       case PlayMode.none:
         return '禁用自动切歌';
     }
-  }
-
-  Future<void> dispose() async {
-    _cancelLoadTimeout();
-    _retryTimer?.cancel();
-    _playlistSaveTimer?.cancel();
-    _queueSyncTimer?.cancel();
-    await _savePlaylist();
-    cancelSleepTimer();
-    // Cancel all stream subscriptions
-    for (final sub in _subscriptions) {
-      await sub.cancel();
-    }
-    _subscriptions.clear();
-    
-    await _audioPlayer.dispose();
-    await _playlistController.close();
-    await _tempPlaylistController.close();
-    await _playedListController.close();
-    await _currentIndexController.close();
-    await _currentMusicController.close();
-    await _isPlayingController.close();
-    await _positionController.close();
-    await _durationController.close();
-    await _playModeController.close();
-    await _playHistoryController.close();
-    await _statusTextController.close();
-    await _isLoadingController.close();
-    await _isSleepTimerActiveController.close();
-    await _sleepTimerRemainingController.close();
-    await _lyricController.close();
-    await _qualityController.close();
   }
 }
