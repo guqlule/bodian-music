@@ -6,6 +6,21 @@ import '../../services/player/player_service.dart';
 import '../../core/storage/storage_service.dart';
 import '../../core/theme/app_theme.dart';
 
+const _qualityOptions = <(String, String, String)>[
+  ('128k', '标准', '128kbps'),
+  ('320k', '高品', '320kbps MP3'),
+  ('flac', '无损', 'FLAC'),
+  ('flac24bit', 'Hi-Res', 'FLAC 24bit'),
+];
+
+String _qualityLabel(String quality) => switch (quality) {
+  '128k' => '标准 (128k)',
+  '320k' => '高品 (320k)',
+  'flac' => '无损 (FLAC)',
+  'flac24bit' => 'Hi-Res (FLAC 24bit)',
+  _ => quality,
+};
+
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -296,21 +311,13 @@ class SettingsScreen extends ConsumerWidget {
   void _showQualityDialog(BuildContext context, WidgetRef ref) {
     final settings = ref.read(settingsProvider);
 
-    // 四档音质（对齐原版 player.playQuality：128k/320k/flac/flac24bit）
-    const options = [
-      ('128k', '标准', '128kbps'),
-      ('320k', '高品', '320kbps MP3'),
-      ('flac', '无损', 'FLAC'),
-      ('flac24bit', 'Hi-Res', 'FLAC 24bit'),
-    ];
-
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('音质选择'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          children: options.map((opt) => RadioListTile<String>(
+          children: _qualityOptions.map((opt) => RadioListTile<String>(
               title: Text(opt.$2), subtitle: Text(opt.$3),
               value: opt.$1, groupValue: settings.quality,
               activeColor: AppColors.primary,
@@ -331,11 +338,6 @@ class SettingsScreen extends ConsumerWidget {
         ],
       ),
     );
-  }
-
-  String _qualityLabel(String quality) {
-    const map = {'128k': '标准 (128k)', '320k': '高品 (320k)', 'flac': '无损 (FLAC)', 'flac24bit': 'Hi-Res (FLAC 24bit)'};
-    return map[quality] ?? quality;
   }
 
   void _showClearCacheDialog(BuildContext context) {
