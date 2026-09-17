@@ -11,106 +11,41 @@ final playerServiceProvider = Provider<PlayerService>((ref) {
   return PlayerService();
 });
 
+/// 用 PlayerService.streamProvider 简化样板
+StreamProvider<T> _psStream<T>(Stream<T> Function(PlayerService) select) =>
+    StreamProvider<T>((ref) => select(ref.watch(playerServiceProvider)));
+
 // Current Music Provider
-final currentMusicProvider = StreamProvider<MusicInfo?>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
+final currentMusicProvider = _psStream<MusicInfo?>((p) {
   // 过滤相同值的连续重复发射（一次播放可能发射多次）
-  return playerService.currentMusicStream.distinct((a, b) => a?.id == b?.id && a?.songUrl == b?.songUrl && a?.imgUrl == b?.imgUrl);
+  return p.currentMusicStream.distinct((a, b) => a?.id == b?.id && a?.songUrl == b?.songUrl && a?.imgUrl == b?.imgUrl);
 });
 
-// Is Playing Provider
-final playQualityProvider = StreamProvider<String>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.qualityStream;
-});
+final playQualityProvider = _psStream<String>((p) => p.qualityStream);
+final isPlayingProvider = _psStream<bool>((p) => p.isPlayingStream);
+final positionProvider = _psStream<Duration>((p) => p.positionStream);
+final durationProvider = _psStream<Duration?>((p) => p.durationStream);
+final currentIndexProvider = _psStream<int>((p) => p.currentIndexStream);
+final playModeProvider = _psStream<PlayMode>((p) => p.playModeStream);
+final playHistoryProvider = _psStream<List<MusicInfo>>((p) => p.playHistoryStream);
+final playedListProvider = _psStream<List<MusicInfo>>((p) => p.playedListStream);
+final tempPlaylistProvider = _psStream<List<MusicInfo>>((p) => p.tempPlaylistStream);
+final statusTextProvider = _psStream<String>((p) => p.statusTextStream);
+final isLoadingProvider = _psStream<bool>((p) => p.isLoadingStream);
+final sleepTimerActiveProvider = _psStream<bool>((p) => p.isSleepTimerActiveStream);
+final sleepTimerRemainingProvider = _psStream<Duration?>((p) => p.sleepTimerRemainingStream);
+final lyricProvider = _psStream<Map<String, String?>?>((p) => p.lyricStream);
 
-final isPlayingProvider = StreamProvider<bool>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.isPlayingStream;
-});
-
-// Position Provider
-final positionProvider = StreamProvider<Duration>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.positionStream;
-});
-
-// Duration Provider
-final durationProvider = StreamProvider<Duration?>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.durationStream;
-});
-
-// Current Playlist Provider
+// Current Playlist Provider（带 distinct 逻辑，单独写）
 final currentPlaylistProvider = StreamProvider<List<MusicInfo>>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.playlistStream.distinct((a, b) {
+  final p = ref.watch(playerServiceProvider);
+  return p.playlistStream.distinct((a, b) {
     if (a.length != b.length) return false;
-    for (int i = 0; i < a.length; i++) {
+    for (var i = 0; i < a.length; i++) {
       if (a[i].id != b[i].id) return false;
     }
     return true;
   });
-});
-
-// Current Index Provider
-final currentIndexProvider = StreamProvider<int>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.currentIndexStream;
-});
-
-// Play Mode Provider
-final playModeProvider = StreamProvider<PlayMode>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.playModeStream;
-});
-
-// Play History Provider
-final playHistoryProvider = StreamProvider<List<MusicInfo>>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.playHistoryStream;
-});
-
-// Played List Provider (for random mode)
-final playedListProvider = StreamProvider<List<MusicInfo>>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.playedListStream;
-});
-
-// Temp Playlist Provider
-final tempPlaylistProvider = StreamProvider<List<MusicInfo>>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.tempPlaylistStream;
-});
-
-// Status Text Provider
-final statusTextProvider = StreamProvider<String>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.statusTextStream;
-});
-
-// Is Loading Provider
-final isLoadingProvider = StreamProvider<bool>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.isLoadingStream;
-});
-
-// Sleep Timer Active Provider
-final sleepTimerActiveProvider = StreamProvider<bool>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.isSleepTimerActiveStream;
-});
-
-// Sleep Timer Remaining Provider
-final sleepTimerRemainingProvider = StreamProvider<Duration?>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.sleepTimerRemainingStream;
-});
-
-// Lyric Provider
-final lyricProvider = StreamProvider<Map<String, String?>?>((ref) {
-  final playerService = ref.watch(playerServiceProvider);
-  return playerService.lyricStream;
 });
 
 // Playlist State Notifier（Hive 持久化）
