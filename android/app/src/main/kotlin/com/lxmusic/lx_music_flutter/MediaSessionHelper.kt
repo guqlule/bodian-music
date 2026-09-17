@@ -2,45 +2,38 @@ package com.lxmusic.lx_music_flutter
 
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
-import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
  * 直接更新原生 MediaSession metadata。
  *
- * 优化策略：
  * - 启动时一次性反射拿到 audio_service 内部的 MediaSessionCompat 引用
- * - 缓存 session 引用 + setMetadata Method 句柄
- * - 之后每次推歌词只做 method.invoke（缓存的方法句柄），
- *   **不再每次 getActiveSessions / getMethod**
+ * - 缓存 session 引用
+ * - 之后每次推歌词只调公开 API setMetadata，不再每次 getActiveSessions / getMethod
  *
  * 车机蓝牙从 MediaSession metadata 读取歌词显示。
  */
-class MediaSessionHelper(private val activity: FlutterActivity) {
+class MediaSessionHelper {
 
-    private var cachedSession: MediaSessionCompat? = null
+    @Volatile private var cachedSession: MediaSessionCompat? = null
 
-    private fun resolveSession(): MediaSessionCompat? {
-        try {
-            val audioServiceCls = Class.forName("com.ryanheise.audioservice.AudioService")
-            val instance: Any? = audioServiceCls.getDeclaredField("instance").apply {
-                isAccessible = true
-            }.get(null)
-            val session = (instance as? android.app.Service)?.let { svc ->
-                audioServiceCls.getDeclaredField("mediaSession").apply {
-                    isAccessible = true
-                }.get(svc) as? MediaSessionCompat
-            }
-            return session
-        } catch (e: Exception) {
-            return null
-        }
-    }
+    /** 通过反射一次性拿到 audio_service.AudioService.instance.mediaSession */
+    private fun resolveSession(): MediaSessionCompat? = runCatching {
+        val cls = Class.forName("com.ryanheise.audioservice.AudioService")
+        val instance = cls.getField("instance").get(null) as? android.app.Service
+            ?: return@runCatching null
+        cls.getField("mediaSession").get(instance) as? MediaSessionCompat
+    }.getOrNull()
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
         if (call.method != "updateLyric") {
             result.notImplemented()
+            return
+        }
+        val session = cachedSession ?: resolveSession().also { cachedSession = it }
+        if (session == null) {
+            result.success(false)
             return
         }
         try {
@@ -58,14 +51,8 @@ class MediaSessionHelper(private val activity: FlutterActivity) {
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
                 .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, title)
                 .build()
-
-            val session = cachedSession ?: resolveSession().also { cachedSession = it }
-            if (session != null) {
-                session.setMetadata(meta)
-                result.success(true)
-            } else {
-                result.success(false)
-            }
+            session.setMetadata(meta)
+            result.success(true)
         } catch (e: Exception) {
             result.error("MEDIA_ERROR", e.message, null)
         }

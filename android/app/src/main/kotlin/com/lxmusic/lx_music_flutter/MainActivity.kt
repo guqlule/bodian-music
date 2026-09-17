@@ -33,7 +33,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        mediaSessionHelper = MediaSessionHelper(this)
+        mediaSessionHelper = MediaSessionHelper()
         visualizerHelper = VisualizerHelper(this)
 
         val visChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VIS_CHANNEL)
