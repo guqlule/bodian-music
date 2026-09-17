@@ -89,26 +89,37 @@ class WebdavException implements Exception {
   /// 根据异常判断错误类型
   static WebdavException fromError(dynamic e) {
     final msg = e.toString();
-    if (msg.contains('SocketException') || msg.contains('Connection refused') || msg.contains('No route to host')) {
-      return WebdavException('网络不可达，请检查地址和端口', type: WebdavErrorType.network, originalError: e);
-    }
-    if (msg.contains('Connection reset') || msg.contains('Connection closed')) {
-      return WebdavException('连接被重置，服务器可能不支持该协议', type: WebdavErrorType.network, originalError: e);
-    }
-    if (msg.contains('401') || msg.contains('403') || msg.contains('Unauthorized')) {
-      return WebdavException('用户名或密码错误', type: WebdavErrorType.auth, originalError: e);
-    }
-    if (msg.contains('404') || msg.contains('Not Found')) {
-      return WebdavException('路径不存在，请检查远程路径', type: WebdavErrorType.path, originalError: e);
-    }
-    if (msg.contains('Timeout') || msg.contains('timeout')) {
-      return WebdavException('连接超时，请检查网络', type: WebdavErrorType.timeout, originalError: e);
-    }
-    if (msg.contains('SSL') || msg.contains('TLS') || msg.contains('certificate')) {
-      return WebdavException('SSL证书错误，请检查HTTPS设置', type: WebdavErrorType.server, originalError: e);
+    for (final entry in _errorRules) {
+      if (entry.pattern.allMatches(msg).isNotEmpty) {
+        return WebdavException(entry.message, type: entry.type, originalError: e);
+      }
     }
     return WebdavException('连接失败: $msg', type: WebdavErrorType.unknown, originalError: e);
   }
+}
+
+// 错误匹配规则表：按顺序匹配，命中即返回。
+// 多个字符串只要有一个匹配就触发
+final List<_ErrorRule> _errorRules = [
+  _ErrorRule(WebdavErrorType.network, '网络不可达，请检查地址和端口',
+      r'SocketException|Connection refused|No route to host'),
+  _ErrorRule(WebdavErrorType.network, '连接被重置，服务器可能不支持该协议',
+      r'Connection reset|Connection closed'),
+  _ErrorRule(WebdavErrorType.auth, '用户名或密码错误',
+      r'401|403|Unauthorized'),
+  _ErrorRule(WebdavErrorType.path, '路径不存在，请检查远程路径',
+      r'404|Not Found'),
+  _ErrorRule(WebdavErrorType.timeout, '连接超时，请检查网络',
+      r'Timeout|timeout'),
+  _ErrorRule(WebdavErrorType.server, 'SSL证书错误，请检查HTTPS设置',
+      r'SSL|TLS|certificate'),
+];
+
+class _ErrorRule {
+  final WebdavErrorType type;
+  final String message;
+  final RegExp pattern;
+  _ErrorRule(this.type, this.message, String p) : pattern = RegExp(p);
 }
 
 /// WebDAV 连接管理
