@@ -1169,7 +1169,10 @@ class PlayerService {
         }
 
         _currentMusicController.add(alternativeWithUrl);
-        await _audioPlayer.setUrl(altUrl);
+        await _audioPlayer.setUrl(altUrl).timeout(const Duration(seconds: 30), onTimeout: () {
+          logDebug('[Player] alt setUrl 超时 30s');
+          throw TimeoutException('SETURL_TIMEOUT');
+        });
         if (_isStaleLoad(requestId)) return;
         _audioPlayer.play();
 
