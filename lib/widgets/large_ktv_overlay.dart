@@ -1,5 +1,6 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme/app_theme.dart';
 import '../providers/app_providers.dart';
@@ -13,34 +14,31 @@ class LargeKtvLyricOverlay extends ConsumerStatefulWidget {
   ConsumerState<LargeKtvLyricOverlay> createState() => _LargeKtvLyricOverlayState();
 }
 
-class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
-    with SingleTickerProviderStateMixin {
+class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay> {
   List<LyricLine> _lyrics = [];
   String _lyricKey = '';
   int _lastIdx = -1; // 上次歌词行索引
   Duration _basePos = Duration.zero;
   DateTime _basePosTime = DateTime.now();
   bool _playing = false;
-  late Ticker _ticker;
-  DateTime _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _ticker;
+  final _TickerListenable _tickerListenable = _TickerListenable();
 
   @override
   void initState() {
     super.initState();
-    _ticker = createTicker(_onTick);
+    _ticker = Timer.periodic(const Duration(milliseconds: 33), (_) => _onTick());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _readInitial();
     });
   }
 
-  /// Ticker 回调：节流至 ~30fps，减少 setState 重建开销
-  /// 扫字视觉感受需要 30fps+ 才平滑，60fps 收益边际递减但开销翻倍
-  void _onTick(Duration elapsed) {
+  /// Ticker 回调：节流至 ~30fps。
+  /// 不再调用 setState —— AnimatedBuilder 会自动监听 ticker 触发局部重建。
+  /// 扫字视觉感受需要 30fps+ 才平滑，60fps 收益边际递减但开销翻倍。
+  void _onTick() {
     if (!mounted) return;
-    final now = DateTime.now();
-    if (now.difference(_lastTick).inMilliseconds < 33) return;
-    _lastTick = now;
-    setState(() {});
+    _tickerListenable.notify();
   }
 
   void _readInitial() {
@@ -61,10 +59,11 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
   }
 
   void _syncTicker() {
-    if (_playing && !_ticker.isActive) {
-      _ticker.start();
-    } else if (!_playing && _ticker.isActive) {
-      _ticker.stop();
+    if (_playing && _ticker == null) {
+      _ticker = Timer.periodic(const Duration(milliseconds: 33), (_) => _onTick());
+    } else if (!_playing && _ticker != null) {
+      _ticker?.cancel();
+      _ticker = null;
     }
   }
 
@@ -106,7 +105,8 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
 
   @override
   void dispose() {
-    _ticker.dispose();
+    _ticker?.cancel();
+    _tickerListenable.dispose();
     super.dispose();
   }
 
@@ -152,10 +152,6 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
         ? _lyrics[idx + 1].time
         : current.time + const Duration(seconds: 5);
     final currentDur = currentEnd - current.time;
-    final currentProgress = currentDur > Duration.zero
-        ? ((_estPos - current.time).inMilliseconds / currentDur.inMilliseconds)
-            .clamp(0.0, 1.0)
-        : 0.0;
 
     final hasNext = idx + 1 < _lyrics.length;
     final nextLine = hasNext ? _lyrics[idx + 1] : null;
@@ -174,6 +170,9 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
     if (isPortrait && maxChars > 12) mainFontSize = (mainFontSize * 0.85).clamp(30.0, 68.0);
     final subFontSize = (mainFontSize * 0.65).clamp(24.0, 44.0);
 
+    // 优化：把 setState 全树重建改为 AnimatedBuilder 局部重建。
+    // 每 33ms 只有 _LyricsContent 内的 RichText 重绘，
+    // 字体/字号/Container 等都不动，setState 不再触发整树 rebuild。
     return Container(
       color: Colors.black87,
       alignment: Alignment.center,
@@ -183,30 +182,46 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
           mainAxisSize: MainAxisSize.max,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (current.text.isNotEmpty)
-              current.hasWords
-                  ? _buildWordByWordText(current, _estPos, mainFontSize)
-                  : LerpScanText(
-                      text: current.text,
-                      progress: currentProgress,
-                      scannedColor: AppColors.primaryDark,
-                      unscannedColor: AppColors.textHint,
-                      fontSize: mainFontSize,
-                      fontWeight: FontWeight.w900,
-                    ),
+            // RepaintBoundary 把当前行和下一行隔开，下一行不变就不重绘
+            RepaintBoundary(
+              child: AnimatedBuilder(
+                animation: _tickerListenable,
+                builder: (context, _) {
+                  final pos = _estPos;
+                  final progress = currentDur > Duration.zero
+                      ? ((pos - current.time).inMilliseconds / currentDur.inMilliseconds)
+                          .clamp(0.0, 1.0)
+                      : 0.0;
+                  if (current.text.isEmpty) return const SizedBox.shrink();
+                  return current.hasWords
+                      ? _buildWordByWordText(current, pos, mainFontSize)
+                      : LerpScanText(
+                          text: current.text,
+                          progress: progress,
+                          scannedColor: AppColors.primaryDark,
+                          unscannedColor: AppColors.textHint,
+                          fontSize: mainFontSize,
+                          fontWeight: FontWeight.w900,
+                        );
+                },
+              ),
+            ),
             if (nextLine != null && nextLine.text.isNotEmpty) ...[
               const SizedBox(height: 32),
-              RichText(
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                text: TextSpan(
-                  text: nextLine.text,
-                  style: TextStyle(
-                    fontSize: subFontSize,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textHint,
-                    fontFamily: 'sans-serif',
+              // 下一行不需要动画，用 RepaintBoundary 隔开避免重建
+              RepaintBoundary(
+                child: RichText(
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  text: TextSpan(
+                    text: nextLine.text,
+                    style: TextStyle(
+                      fontSize: subFontSize,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textHint,
+                      fontFamily: 'sans-serif',
+                    ),
                   ),
                 ),
               ),
@@ -264,6 +279,11 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
       ),
     );
   }
+}
+
+/// 自建 Listenable，让 AnimatedBuilder 能订阅我们的 Timer
+class _TickerListenable extends ChangeNotifier {
+  void notify() => notifyListeners();
 }
 
 /// 逐字符 Color.lerp 扫字 — 无 ShaderMask / ClipRect，零伪影。
