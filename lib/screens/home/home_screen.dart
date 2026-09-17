@@ -824,12 +824,7 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
   Widget _buildCoverArt(MusicInfo music, bool playing, {double size = 140}) {
     return AnimatedBuilder(
       animation: _rotateCtrl,
-      builder: (context, child) {
-        return Transform.rotate(
-          angle: _rotateCtrl.value * 2 * pi,
-          child: child,
-        );
-      },
+      builder: (context, child) => Transform.rotate(angle: _rotateCtrl.value * 2 * pi, child: child),
       child: Container(
         width: size,
         height: size,
@@ -849,19 +844,18 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
                   music.imgUrl!,
                   fit: BoxFit.cover,
                   cacheWidth: 280,
-                  errorBuilder: (_, __, ___) => Container(
-                    color: AppColors.primarySoftColor,
-                    child: Icon(Icons.music_note_rounded, color: AppColors.primary, size: size * 0.4),
-                  ),
+                  errorBuilder: (_, __, ___) => _coverPlaceholder(size),
                 )
-              : Container(
-                  color: AppColors.primarySoftColor,
-                  child: Icon(Icons.music_note_rounded, color: AppColors.primary, size: size * 0.4),
-                ),
+              : _coverPlaceholder(size),
         ),
       ),
     );
   }
+
+  Widget _coverPlaceholder(double size) => Container(
+        color: AppColors.primarySoftColor,
+        child: Icon(Icons.music_note_rounded, color: AppColors.primary, size: size * 0.4),
+      );
 
   /// 首页播放控制区（紧凑版进度条 + 控制按钮）
   Widget _buildHomeControls(MusicInfo music, bool playing) {
