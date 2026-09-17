@@ -46,23 +46,6 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- 自建前台媒体播放服务（替代 audio_service） -->
-        <service
-            android:name=".LxPlaybackService"
-            android:foregroundServiceType="mediaPlayback"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.media.browse.MediaBrowserService" />
-            </intent-filter>
-        </service>
-        <receiver
-            android:name=".LxMediaButtonReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MEDIA_BUTTON" />
-            </intent-filter>
-        </receiver>
-
         <!-- HiCar 生命周期广播（车机连接/断开） -->
         <receiver
             android:name=".HiCarReceiver"

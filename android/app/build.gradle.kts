@@ -44,5 +44,7 @@ flutter {
 }
 
 dependencies {
+    // MediaSessionCompat/MediaMetadataCompat 来自 androidx.media:media 包
+    // (audio_service 也带，但显式声明避免依赖链变化时丢失)
     implementation("androidx.media:media:1.4.1")
 }

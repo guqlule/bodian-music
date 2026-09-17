@@ -27,18 +27,14 @@ class MainActivity : FlutterActivity() {
     private var equalizer: Equalizer? = null
     private var eqEnabled = false
     private var eqSessionId = -1
+    private lateinit var mediaSessionHelper: MediaSessionHelper
     private lateinit var visualizerHelper: VisualizerHelper
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        mediaSessionHelper = MediaSessionHelper(this)
         visualizerHelper = VisualizerHelper(this)
-
-        // 启动自建的前台播放服务（替代 audio_service）
-        startLxPlaybackService()
-
-        // 注册 LxMediaBridge channel
-        LxMediaBridge.registerChannels(flutterEngine.dartExecutor.binaryMessenger)
 
         val visChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VIS_CHANNEL)
         visChannel.setMethodCallHandler { call, result ->
@@ -54,20 +50,13 @@ class MainActivity : FlutterActivity() {
             handleEqMethodCall(call, result)
         }
 
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MEDIA_CHANNEL).setMethodCallHandler { call, result ->
+            mediaSessionHelper.handle(call, result)
+        }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, META_CHANNEL).setMethodCallHandler { call, result ->
             handleMetadataCall(call, result)
         }
-    }
-
-    private fun startLxPlaybackService() {
-        try {
-            val intent = Intent(this, LxPlaybackService::class.java)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-        } catch (_: Exception) {}
     }
 
     private fun handleEqMethodCall(call: MethodCall, result: MethodChannel.Result): Boolean {

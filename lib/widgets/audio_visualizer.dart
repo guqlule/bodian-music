@@ -131,7 +131,6 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
     _sub = widget.spectrumStream.listen((data) {
       if (data.frequencies.isNotEmpty) _lastNativeData = DateTime.now();
       _spectrum = data;
-      _dirty = true;
       while (_peaks.length < data.frequencies.length) {
         _peaks.add(0);
       }
@@ -148,8 +147,6 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
     });
     _syncTimer();
   }
-
-  bool _dirty = false;
 
   void _syncTimer() {
     // 30fps：音视频谱不需要 60fps，每帧含全屏重绘 + 模糊绘制，30fps 已足够流畅且显著降低 GPU 压力
@@ -217,7 +214,6 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
       volume: vol * 0.6,
       beat: pulse > 0.95 ? 1.0 : 0,
     );
-    _dirty = true;
   }
 
   @override
