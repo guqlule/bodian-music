@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'package:crypto/crypto.dart';
 
 /// 单个字/词，带独立时间戳（逐字歌词用）
 class LyricWord {
@@ -65,18 +64,7 @@ class LyricParser {
       if (text.isEmpty) continue;
 
       for (final match in matches) {
-        final int minutes = int.parse(match.group(1)!);
-        final int seconds = int.parse(match.group(2)!);
-        final int milliseconds = match.group(3)!.isNotEmpty
-            ? int.parse(match.group(3)!.padRight(3, '0'))
-            : 0;
-
-        final Duration time = Duration(
-          minutes: minutes,
-          seconds: seconds,
-          milliseconds: milliseconds,
-        );
-
+        final time = _parseDuration(match.group(1)!, match.group(2)!, match.group(3)!);
         timedLines.add(MapEntry(time, text));
       }
     }
@@ -185,25 +173,5 @@ class LyricParser {
         words: line.words,
       );
     }).toList();
-  }
-
-  static String getTitle(Map<String, String> tags) {
-    return tags['ti'] ?? '';
-  }
-
-  static String getArtist(Map<String, String> tags) {
-    return tags['ar'] ?? '';
-  }
-
-  static String getAlbum(Map<String, String> tags) {
-    return tags['al'] ?? '';
-  }
-
-  static String getOffset(Map<String, String> tags) {
-    return tags['offset'] ?? '0';
-  }
-
-  static String calculateHash(String text) {
-    return md5.convert(utf8.encode(text)).toString();
   }
 }
