@@ -9,14 +9,13 @@ class MediaSessionService {
 
   static const _channel = MethodChannel('com.lxmusic/media_session');
 
-  /// 直接更新 MediaSession 的 title/artist/album + 歌词 extras。
+  /// 直接更新 MediaSession 的 title/artist/album + 歌词。
   /// 原生端一次性反射拿到 audio_service 内部的 MediaSession，缓存后用公开 API setMetadata 推送。
   Future<bool> updateLyric({
     required String title,
     required String artist,
     required String album,
     String lyric = '',
-    String? artPath,
   }) async {
     try {
       final result = await _channel.invokeMethod<bool>('updateLyric', {
@@ -24,7 +23,6 @@ class MediaSessionService {
         'artist': artist,
         'album': album,
         'lyric': lyric,
-        if (artPath != null) 'artPath': artPath,
       });
       return result ?? false;
     } catch (_) {
