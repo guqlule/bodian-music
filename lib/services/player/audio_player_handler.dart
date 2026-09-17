@@ -86,24 +86,15 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     _baseMediaId = music.id;
     _lastLyricText = null;
     try {
-      final subtitle = '${music.singer} · ${music.album}';
-      Uri? artUri;
-      if (music.imgUrl != null && music.imgUrl!.isNotEmpty) {
-        if (music.source == 'local') {
-          artUri = Uri.file(music.imgUrl!);
-        } else {
-          artUri = Uri.tryParse(music.imgUrl!);
-        }
-      }
       final item = MediaItem(
         id: music.id,
         title: music.name,
         artist: music.singer,
         album: music.album,
-        artUri: artUri,
+        artUri: _buildArtUri(music),
         duration: music.duration > 0 ? Duration(milliseconds: music.duration) : null,
         displayTitle: music.name,
-        displaySubtitle: subtitle,
+        displaySubtitle: '${music.singer} · ${music.album}',
         displayDescription: music.album,
       );
       _currentItem = item;
