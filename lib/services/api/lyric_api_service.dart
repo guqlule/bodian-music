@@ -191,71 +191,52 @@ class LyricApiService {
   // ==================== 酷狗 (KG) ====================
   /// 从酷狗获取歌词
   Future<Map<String, String?>?> _getKgLyric(MusicInfo music) async {
-    try {
-      final musicId = music.songId ?? music.hash ?? music.id;
-      if (musicId.isEmpty) return null;
+    final musicId = music.songId ?? music.hash ?? music.id;
+    if (musicId.isEmpty) return null;
+    logDebug('[LyricApi] KG: 请求 musicId=$musicId');
 
-      logDebug('[LyricApi] KG: 请求 musicId=$musicId');
-      
-      // 搜索歌词
-      final searchUrl = Uri.parse(
+    // 搜索歌词
+    final searchData = await _httpGetJson(
+      Uri.parse(
         'https://krcs.kugou.com/search?ver=1&man=yes&client=pc'
         '&keyword=${Uri.encodeComponent(music.name + ' ' + music.singer)}'
         '&hash=$musicId&timelength=0&lrctxt=1',
-      );
+      ),
+      tag: 'KG',
+    );
+    if (searchData == null) return null;
 
-      final searchResponse = await http.get(searchUrl, headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      }).timeout(const Duration(seconds: 10));
-
-      logDebug('[LyricApi] KG: 搜索响应=${searchResponse.statusCode}');
-      
-      if (searchResponse.statusCode != 200) return null;
-
-      final searchData = jsonDecode(searchResponse.body);
-      final candidates = searchData['candidates'] as List?;
-      if (candidates == null || candidates.isEmpty) {
-        logDebug('[LyricApi] KG: 无候选歌词');
-        return null;
-      }
-
-      final first = candidates[0];
-      final lrcId = first['id'];
-      final accessKey = first['accesskey'];
-
-      logDebug('[LyricApi] KG: 找到歌词 id=$lrcId');
-      
-      // 下载歌词
-      final downloadUrl = Uri.parse(
-        'https://lyrics.kugou.com/download?ver=1&client=pc'
-        '&id=$lrcId&accesskey=$accessKey&fmt=lrc&charset=utf8',
-      );
-
-      final downloadResponse = await http.get(downloadUrl, headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      }).timeout(const Duration(seconds: 10));
-
-      logDebug('[LyricApi] KG: 下载响应=${downloadResponse.statusCode}');
-      
-      if (downloadResponse.statusCode != 200) return null;
-
-      final downloadData = jsonDecode(downloadResponse.body);
-      final content = downloadData['content'] as String?;
-      if (content == null || content.isEmpty) {
-        logDebug('[LyricApi] KG: content为空');
-        return null;
-      }
-
-      // Base64 解码
-      final lyric = utf8.decode(base64Decode(content));
-      if (lyric.isEmpty) return null;
-
-      logDebug('[LyricApi] KG: 成功，歌词长度=${lyric.length}');
-      return {'lyric': lyric, 'tlyric': null};
-    } catch (e) {
-      logDebug('[LyricApi] KG: 失败 - $e');
+    final candidates = searchData['candidates'] as List?;
+    if (candidates == null || candidates.isEmpty) {
+      logDebug('[LyricApi] KG: 无候选歌词');
       return null;
     }
+    final first = candidates[0];
+    final lrcId = first['id'];
+    final accessKey = first['accesskey'];
+    logDebug('[LyricApi] KG: 找到歌词 id=$lrcId');
+
+    // 下载歌词
+    final downloadData = await _httpGetJson(
+      Uri.parse(
+        'https://lyrics.kugou.com/download?ver=1&client=pc'
+        '&id=$lrcId&accesskey=$accessKey&fmt=lrc&charset=utf8',
+      ),
+      tag: 'KG',
+    );
+    if (downloadData == null) return null;
+
+    final content = downloadData['content'] as String?;
+    if (content == null || content.isEmpty) {
+      logDebug('[LyricApi] KG: content为空');
+      return null;
+    }
+
+    // Base64 解码
+    final lyric = utf8.decode(base64Decode(content));
+    if (lyric.isEmpty) return null;
+    logDebug('[LyricApi] KG: 成功，歌词长度=${lyric.length}');
+    return {'lyric': lyric, 'tlyric': null};
   }
 
   // ==================== 跨源兜底：网易云歌词搜索 ====================
