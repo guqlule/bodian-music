@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:rxdart/rxdart.dart';
@@ -784,9 +785,14 @@ class PlayerService {
       }
 
       // 检查请求是否已被取消
-      if (_isStaleLoad(requestId)) return;
+      if (_isStaleLoad(requestId)) {
+        print('[Player] STALE at 787, requestId=$requestId current=$_loadRequestId');
+        return;
+      }
+      print('[Player] AFTER_STALE_787, url=$url');
 
       if (url == null || url.isEmpty) {
+        print('[Player] URL_NULL_OR_EMPTY, url=$url');
         // 未激活自定义源时直接抛出，不重试（重试无意义）
         if (!_urlService.isUserApiActive) {
           throw Exception('NO_SCRIPT');
@@ -801,7 +807,7 @@ class PlayerService {
       }
 
       _cancelLoadTimeout();
-      logDebug('[Player] 进入播放前, url=$url');
+      debugPrint('[Player] 进入播放前, url=$url');
 
       final musicWithUrl = music.copyWith(songUrl: url);
 
@@ -830,23 +836,26 @@ class PlayerService {
       }
 
       // 再次检查请求是否已被取消
-      if (_isStaleLoad(requestId)) return;
+      if (_isStaleLoad(requestId)) {
+        debugPrint('[Player] STALE at 836, requestId=$requestId current=$_loadRequestId');
+        return;
+      }
 
-      logDebug('[Player] 准备 setUrl: $url');
+      debugPrint('[Player] 准备 setUrl: $url');
       await _audioPlayer.setUrl(url).timeout(const Duration(seconds: 30), onTimeout: () {
         logDebug('[Player] setUrl 超时 30s');
         throw TimeoutException('SETURL_TIMEOUT');
       });
-      logDebug('[Player] setUrl 完成');
+      debugPrint('[Player] setUrl 完成');
       if (_isStaleLoad(requestId)) return;
-      logDebug('[Player] 调 play()');
+      debugPrint('[Player] 调 play()');
       _audioPlayer.play().catchError((e) {
         logDebug('[Player] play() 失败: $e，尝试 seek(0) + 重播');
         try {
           _audioPlayer.seek(Duration.zero).then((_) => _audioPlayer.play());
         } catch (_) {}
       });
-      logDebug('[Player] play() 已调');
+      debugPrint('[Player] play() 已调');
 
       _addToHistory(musicWithUrl);
       _isLoadingController.add(false);
