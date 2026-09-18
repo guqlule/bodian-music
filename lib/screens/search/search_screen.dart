@@ -703,8 +703,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   void _playMusic(MusicInfo music) {
     final playerService = ref.read(playerServiceProvider);
-    playerService.playMusic(music).catchError((e) {
-      // 播放失败时不阻塞UI
+    // 先取 messenger（必须在 pop 前取，pop 后 context 失效）
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    playerService.playMusic(music).then((_) {
+      if (!mounted) return;
+      // 关闭搜索页回到首页（首页有全屏歌词 + 频谱）
+      if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+    }).catchError((e) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text('播放失败: $e')),
+      );
     });
   }
 
