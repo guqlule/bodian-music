@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
@@ -786,13 +787,16 @@ class PlayerService {
 
       // 检查请求是否已被取消
       if (_isStaleLoad(requestId)) {
-        print('[Player] STALE at 787, requestId=$requestId current=$_loadRequestId');
+        developer.log('[Player] STALE at 787, requestId=$requestId current=$_loadRequestId', name: 'lx');
+        debugPrint('[Player] STALE at 787');
         return;
       }
-      print('[Player] AFTER_STALE_787, url=$url');
+      developer.log('[Player] AFTER_STALE_787, url=$url', name: 'lx');
+      debugPrint('[Player] AFTER_STALE_787 url=$url');
 
       if (url == null || url.isEmpty) {
-        print('[Player] URL_NULL_OR_EMPTY, url=$url');
+        developer.log('[Player] URL_NULL_OR_EMPTY, url=$url', name: 'lx');
+        debugPrint('[Player] URL_NULL_OR_EMPTY');
         // 未激活自定义源时直接抛出，不重试（重试无意义）
         if (!_urlService.isUserApiActive) {
           throw Exception('NO_SCRIPT');
