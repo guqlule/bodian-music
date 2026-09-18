@@ -119,6 +119,17 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
       onPause: _persistPlaylist,
       onHide: _persistPlaylist,
       onDetach: _persistPlaylist,
+      onResume: () {
+        // 后台 → 前台：audio_session 已恢复。
+        // 如果之前在播放（wasPlaying），调 play() 唤醒 ExoPlayer，
+        // 让 positionStream 重新发射，MiniKtvLyricBar 的 ticker 才会算出正确位置。
+        try {
+          final player = PlayerService.instance;
+          if (player.currentMusic != null && !player.isPlaying) {
+            player.audioPlayer.play();
+          }
+        } catch (_) {}
+      },
       onExitRequested: () async {
         _persistPlaylist();
         return AppExitResponse.exit;
