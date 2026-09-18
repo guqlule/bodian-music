@@ -16,6 +16,7 @@ class MediaSessionService {
     required String artist,
     required String album,
     String lyric = '',
+    int? durationMs,
   }) async {
     try {
       final result = await _channel.invokeMethod<bool>('updateLyric', {
@@ -23,6 +24,7 @@ class MediaSessionService {
         'artist': artist,
         'album': album,
         'lyric': lyric,
+        if (durationMs != null) 'durationMs': durationMs,
       });
       return result ?? false;
     } catch (_) {

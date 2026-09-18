@@ -67,8 +67,6 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
     _lyricKey = key;
     _lyrics = LyricParser.parse(lyricText);
     _lastIndex = -1;
-    // 触发 build：仅 _lyrics 字段变化不会让 ConsumerWidget rebuild，
-    // 必须显式 setState。ticker 也会触发 build，但播放前 ticker 没启动。
     if (mounted) setState(() {});
     if (_lyrics.isNotEmpty && _playing && _ticker == null) {
       _ticker = Timer.periodic(const Duration(milliseconds: 33), (_) {
@@ -136,7 +134,6 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
         _lyricKey = '';
         _lyrics = [];
         _lastIndex = -1;
-        _tryParseLyric(ref.read(lyricProvider).valueOrNull);
       }
     });
 
@@ -144,10 +141,6 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
       _tryParseLyric(ref.read(lyricProvider).valueOrNull);
     }
     if (_lyrics.isEmpty) return const SizedBox.shrink();
-
-    final basePos = _basePos;
-    final baseTime = _basePosTime;
-    final isPlaying = _playing;
 
     return GestureDetector(
       onTap: () => _showLargeLyric(context),
@@ -157,9 +150,9 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
         child: AnimatedBuilder(
           animation: _tickerListenable,
           builder: (context, _) {
-            final estPos = isPlaying
-                ? basePos + DateTime.now().difference(baseTime)
-                : basePos;
+            final estPos = _playing
+                ? _basePos + DateTime.now().difference(_basePosTime)
+                : _basePos;
             final idx = _findIndex(estPos);
             if (idx < 0) return const SizedBox.shrink();
             final progress = _progress(idx, estPos);

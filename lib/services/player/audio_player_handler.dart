@@ -35,8 +35,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   StreamSubscription? _playbackSub;
   Timer? _posRefreshTimer;
 
-  /// 缓存的"蓝牙歌词"开关。播放期间读取一次，避免 500ms tick 频繁读 SharedPreferences。
-  bool _btLyricCached = true;
+
 
   /// 是否启用蓝牙/车机歌词推送。从 SharedPreferences 读取。
   Future<bool> _readBluetoothLyricEnabled() async {
@@ -60,7 +59,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
   /// 古早车机蓝牙只在 playbackState position 变化时才刷新显示。
   void _updatePosRefreshTimer() {
-    if (_player.playing && _btLyricCached) {
+    if (_player.playing) {
       _posRefreshTimer ??= Timer.periodic(
         const Duration(milliseconds: 500),
         (_) => _broadcastState(),
@@ -117,7 +116,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     _lastLyricPush = DateTime.now();
 
     unawaited(_readBluetoothLyricEnabled().then((enabled) {
-      _btLyricCached = enabled;
       if (!enabled) return;
       _doPushLyric(line, text);
     }));
@@ -127,6 +125,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     try {
       final hasLine = line != null && line.isNotEmpty;
       final cur = _currentItem!;
+      final dur = _player.duration;
 
       _currentItem = MediaItem(
         id: _baseMediaId,
@@ -134,18 +133,21 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         artist: cur.artist,
         album: cur.album ?? '',
         artUri: cur.artUri,
-        duration: cur.duration,
+        duration: dur ?? cur.duration,
         displayTitle: hasLine ? line : (cur.displayTitle ?? cur.title),
         displaySubtitle: cur.artist ?? '',
         displayDescription: hasLine ? line : (cur.album ?? ''),
         extras: {'lyric': line ?? ''},
       );
-
+      // 灵动岛/通知栏：audio_service 读 this.mediaMetadata
+      mediaItem.add(_currentItem);
+      // 车机蓝牙：直接写 session.setMetadata()，走 AVRCP
       MediaSessionService().updateLyric(
         title: hasLine ? line! : cur.title,
         artist: cur.artist ?? '',
         album: cur.album ?? '',
         lyric: text,
+        durationMs: (dur ?? cur.duration)?.inMilliseconds,
       );
     } catch (_) {}
   }
@@ -250,7 +252,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> play() async {
     await _player.play();
-    _btLyricCached = await _readBluetoothLyricEnabled();
     _updatePosRefreshTimer();
   }
 

@@ -6,7 +6,7 @@ import '../core/theme/app_theme.dart';
 import '../providers/app_providers.dart';
 import '../services/lyric/lyric_parser.dart';
 
-/// 全屏大歌词 overlay — RichText 逐字符 Color.lerp 扫字
+/// 全屏大歌词 overlay — RichText 逐字符 Color.lerp 扫字 + 缓慢渐变流动背景
 class LargeKtvLyricOverlay extends ConsumerStatefulWidget {
   const LargeKtvLyricOverlay({super.key});
 
@@ -14,7 +14,8 @@ class LargeKtvLyricOverlay extends ConsumerStatefulWidget {
   ConsumerState<LargeKtvLyricOverlay> createState() => _LargeKtvLyricOverlayState();
 }
 
-class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay> {
+class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
+    with SingleTickerProviderStateMixin {
   List<LyricLine> _lyrics = [];
   String _lyricKey = '';
   int _lastIdx = -1; // 上次歌词行索引
@@ -24,9 +25,17 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay> {
   Timer? _ticker;
   final _TickerListenable _tickerListenable = _TickerListenable();
 
+  late final AnimationController _gradientAnim;
+  late final _FlowingGradientPainter _gradientPainter;
+
   @override
   void initState() {
     super.initState();
+    _gradientAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 12),
+    )..repeat();
+    _gradientPainter = _FlowingGradientPainter(animation: _gradientAnim);
     _ticker = Timer.periodic(const Duration(milliseconds: 33), (_) => _onTick());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _readInitial();
@@ -105,6 +114,7 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay> {
 
   @override
   void dispose() {
+    _gradientAnim.dispose();
     _ticker?.cancel();
     _tickerListenable.dispose();
     super.dispose();
@@ -173,62 +183,69 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay> {
     // 优化：把 setState 全树重建改为 AnimatedBuilder 局部重建。
     // 每 33ms 只有 _LyricsContent 内的 RichText 重绘，
     // 字体/字号/Container 等都不动，setState 不再触发整树 rebuild。
-    return Container(
-      color: Colors.black87,
-      alignment: Alignment.center,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.max,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // RepaintBoundary 把当前行和下一行隔开，下一行不变就不重绘
-            RepaintBoundary(
-              child: AnimatedBuilder(
-                animation: _tickerListenable,
-                builder: (context, _) {
-                  final pos = _estPos;
-                  final progress = currentDur > Duration.zero
-                      ? ((pos - current.time).inMilliseconds / currentDur.inMilliseconds)
-                          .clamp(0.0, 1.0)
-                      : 0.0;
-                  if (current.text.isEmpty) return const SizedBox.shrink();
-                  return current.hasWords
-                      ? _buildWordByWordText(current, pos, mainFontSize)
-                      : LerpScanText(
-                          text: current.text,
-                          progress: progress,
-                          scannedColor: AppColors.primaryDark,
-                          unscannedColor: AppColors.textHint,
-                          fontSize: mainFontSize,
-                          fontWeight: FontWeight.w900,
-                        );
-                },
-              ),
-            ),
-            if (nextLine != null && nextLine.text.isNotEmpty) ...[
-              const SizedBox(height: 32),
-              // 下一行不需要动画，用 RepaintBoundary 隔开避免重建
-              RepaintBoundary(
-                child: RichText(
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  text: TextSpan(
-                    text: nextLine.text,
-                    style: TextStyle(
-                      fontSize: subFontSize,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textHint,
-                      fontFamily: 'sans-serif',
+    return AnimatedBuilder(
+      animation: _gradientAnim,
+      builder: (context, _) {
+        return CustomPaint(
+          painter: _gradientPainter,
+          child: Container(
+            alignment: Alignment.center,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.max,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // RepaintBoundary 把当前行和下一行隔开，下一行不变就不重绘
+                  RepaintBoundary(
+                    child: AnimatedBuilder(
+                      animation: _tickerListenable,
+                      builder: (context, _) {
+                        final pos = _estPos;
+                        final progress = currentDur > Duration.zero
+                            ? ((pos - current.time).inMilliseconds / currentDur.inMilliseconds)
+                                .clamp(0.0, 1.0)
+                            : 0.0;
+                        if (current.text.isEmpty) return const SizedBox.shrink();
+                        return current.hasWords
+                            ? _buildWordByWordText(current, pos, mainFontSize)
+                            : LerpScanText(
+                                text: current.text,
+                                progress: progress,
+                                scannedColor: AppColors.primaryDark,
+                                unscannedColor: AppColors.textHint,
+                                fontSize: mainFontSize,
+                                fontWeight: FontWeight.w900,
+                              );
+                      },
                     ),
                   ),
-                ),
+                  if (nextLine != null && nextLine.text.isNotEmpty) ...[
+                    const SizedBox(height: 32),
+                    // 下一行不需要动画，用 RepaintBoundary 隔开避免重建
+                    RepaintBoundary(
+                      child: RichText(
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        text: TextSpan(
+                          text: nextLine.text,
+                          style: TextStyle(
+                            fontSize: subFontSize,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textHint,
+                            fontFamily: 'sans-serif',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ],
-        ),
-      ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -350,4 +367,79 @@ class LerpScanText extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 缓慢流动的深色渐变背景 Painter。
+/// 12 秒一个周期，三个色点沿贝塞尔路径缓慢移动，
+/// 营造出沉浸式但不抢歌词的氛围感。
+class _FlowingGradientPainter extends CustomPainter {
+  final Animation<double> animation;
+
+  _FlowingGradientPainter({required this.animation})
+      : super(repaint: animation);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = animation.value; // 0..1
+
+    // 三个色点，用 sin/cos 做圆形轨道运动
+    final p1 = Offset(
+      size.width * (0.2 + 0.15 * _sin(t * 2 * 3.14159)),
+      size.height * (0.3 + 0.2 * _cos(t * 2 * 3.14159)),
+    );
+    final p2 = Offset(
+      size.width * (0.7 + 0.2 * _cos(t * 2 * 3.14159 + 2.0)),
+      size.height * (0.6 + 0.15 * _sin(t * 2 * 3.14159 + 2.0)),
+    );
+    final p3 = Offset(
+      size.width * (0.5 + 0.18 * _sin(t * 2 * 3.14159 + 4.0)),
+      size.height * (0.8 + 0.12 * _cos(t * 2 * 3.14159 + 4.0)),
+    );
+
+    // 基底深色
+    final bgPaint = Paint()..color = const Color(0xFF0D0D0D);
+    canvas.drawRect(Offset.zero & size, bgPaint);
+
+    // 柔和光晕叠加（使用 BlendMode.screen 做加色混合）
+    final glow1 = Paint()
+      ..shader = RadialGradient(
+        colors: const [
+          Color(0x30C9A882), // primary 低透明度
+          Color(0x00000000),
+        ],
+      ).createShader(Rect.fromCircle(center: p1, radius: size.width * 0.5));
+    canvas.drawRect(Offset.zero & size, glow1);
+
+    final glow2 = Paint()
+      ..shader = RadialGradient(
+        colors: const [
+          Color(0x20A8C4C9), // accent1 低透明度
+          Color(0x00000000),
+        ],
+      ).createShader(Rect.fromCircle(center: p2, radius: size.width * 0.45));
+    canvas.drawRect(Offset.zero & size, glow2);
+
+    final glow3 = Paint()
+      ..shader = RadialGradient(
+        colors: const [
+          Color(0x18C9A8B8), // accent2 低透明度
+          Color(0x00000000),
+        ],
+      ).createShader(Rect.fromCircle(center: p3, radius: size.width * 0.4));
+    canvas.drawRect(Offset.zero & size, glow3);
+  }
+
+  /// sin 快速近似（避免引入 math 库）
+  static double _sin(double x) {
+    x = x % (2 * 3.14159265);
+    if (x < 0) x += 2 * 3.14159265;
+    // 三阶近似，误差 < 0.02
+    final q = (x / 3.14159265 - 2).abs();
+    return (1 - q * q) * (q < 1 ? 1 : -1);
+  }
+
+  static double _cos(double x) => _sin(x + 3.14159265 / 2);
+
+  @override
+  bool shouldRepaint(_FlowingGradientPainter old) => true;
 }

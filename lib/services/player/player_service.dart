@@ -115,12 +115,14 @@ class PlayerService {
   static const int _maxHistorySize = 100;
 
   DateTime _lastMediaSync = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastPlayCallTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   void _init() {
     _subscriptions.add(_audioPlayer.positionStream.listen((position) {
       // 节流：仅当秒数变化或首尾时才更新，避免60fps触发rebuild
       final last = _positionController.value;
       if (position.inMilliseconds - last.inMilliseconds >= 200 ||
+          position < last ||
           position == Duration.zero ||
           (_durationController.value != null && position >= _durationController.value!)) {
         _positionController.add(position);
@@ -159,8 +161,11 @@ class PlayerService {
         _statusTextController.add('缓冲中...');
       } else if (state.processingState == ProcessingState.idle && !state.playing) {
         if (_currentMusicController.value != null && !_isLoadingController.value) {
+          // play() 后 2 秒内的 idle 不算异常（player 状态切换有延迟）
+          final sinceLastPlay = DateTime.now().difference(_lastPlayCallTime).inMilliseconds;
+          if (sinceLastPlay < 2000) return;
           // ExoPlayer 因源错误(404)回退到 idle → 自动跳下一首
-          logDebug('[Player] 感知到异常 idle，自动跳下一首');
+          logDebug('[Player] 感知到异常 idle（距上次play ${sinceLastPlay}ms），自动跳下一首');
           _statusTextController.add('');
           playNext(isAutoToggle: true);
         }
@@ -858,6 +863,7 @@ class PlayerService {
       debugPrint('[Player] setAudioSource 完成');
       if (_isStaleLoad(requestId)) return;
       debugPrint('[Player] 调 play()');
+      _lastPlayCallTime = DateTime.now();
       _audioPlayer.play().catchError((e) {
         logDebug('[Player] play() 失败: $e，尝试 seek(0) + 重播');
         try {
@@ -1197,6 +1203,7 @@ class PlayerService {
           throw TimeoutException('SETURL_TIMEOUT');
         });
         if (_isStaleLoad(requestId)) return;
+        _lastPlayCallTime = DateTime.now();
         _audioPlayer.play();
 
         _addToHistory(alternativeWithUrl);
@@ -1278,6 +1285,7 @@ class PlayerService {
     }
 
     try {
+      _lastPlayCallTime = DateTime.now();
       await _audioPlayer.play();
     } catch (e) {
       logDebug('[Player] play() 异常，尝试重新加载: $e');

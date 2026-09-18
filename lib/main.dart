@@ -123,12 +123,18 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
         // 后台 → 前台：audio_session 已恢复。
         // 如果之前在播放（wasPlaying），调 play() 唤醒 ExoPlayer，
         // 让 positionStream 重新发射，MiniKtvLyricBar 的 ticker 才会算出正确位置。
+        logDebug('[Lifecycle] onResume 触发');
         try {
           final player = PlayerService.instance;
-          if (player.currentMusic != null && !player.isPlaying) {
+          final music = player.currentMusic;
+          logDebug('[Lifecycle] onResume currentMusic=$music isPlaying=${player.isPlaying}');
+          if (music != null && !player.isPlaying) {
+            logDebug('[Lifecycle] onResume 调 play()');
             player.audioPlayer.play();
           }
-        } catch (_) {}
+        } catch (e) {
+          logDebug('[Lifecycle] onResume 异常: $e');
+        }
       },
       onExitRequested: () async {
         _persistPlaylist();
