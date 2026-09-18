@@ -846,11 +846,16 @@ class PlayerService {
       }
 
       debugPrint('[Player] 准备 setUrl: $url');
-      await _audioPlayer.setUrl(url).timeout(const Duration(seconds: 30), onTimeout: () {
-        logDebug('[Player] setUrl 超时 30s');
-        throw TimeoutException('SETURL_TIMEOUT');
+      // preload: false 让 setUrl 立即返回（不等 ExoPlayer 缓冲完成），
+      // 避免在 audio_session 内部初始化时阻塞导致 5 秒后自动 pause
+      await _audioPlayer.setAudioSource(
+        AudioSource.uri(Uri.parse(url)),
+        preload: false,
+      ).timeout(const Duration(seconds: 30), onTimeout: () {
+        logDebug('[Player] setAudioSource 超时 30s');
+        throw TimeoutException('SETSOURCE_TIMEOUT');
       });
-      debugPrint('[Player] setUrl 完成');
+      debugPrint('[Player] setAudioSource 完成');
       if (_isStaleLoad(requestId)) return;
       debugPrint('[Player] 调 play()');
       _audioPlayer.play().catchError((e) {
