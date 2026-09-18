@@ -801,6 +801,7 @@ class PlayerService {
       }
 
       _cancelLoadTimeout();
+      logDebug('[Player] 进入播放前, url=$url');
 
       final musicWithUrl = music.copyWith(songUrl: url);
 
@@ -831,17 +832,21 @@ class PlayerService {
       // 再次检查请求是否已被取消
       if (_isStaleLoad(requestId)) return;
 
+      logDebug('[Player] 准备 setUrl: $url');
       await _audioPlayer.setUrl(url).timeout(const Duration(seconds: 30), onTimeout: () {
         logDebug('[Player] setUrl 超时 30s');
         throw TimeoutException('SETURL_TIMEOUT');
       });
+      logDebug('[Player] setUrl 完成');
       if (_isStaleLoad(requestId)) return;
+      logDebug('[Player] 调 play()');
       _audioPlayer.play().catchError((e) {
         logDebug('[Player] play() 失败: $e，尝试 seek(0) + 重播');
         try {
           _audioPlayer.seek(Duration.zero).then((_) => _audioPlayer.play());
         } catch (_) {}
       });
+      logDebug('[Player] play() 已调');
 
       _addToHistory(musicWithUrl);
       _isLoadingController.add(false);
