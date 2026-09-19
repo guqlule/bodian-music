@@ -41,16 +41,37 @@ class MediaSessionHelper {
             val artist = call.argument<String>("artist") ?: ""
             val album = call.argument<String>("album") ?: ""
             val lyric = call.argument<String>("lyric") ?: ""
+            val durationMs = call.argument<Number>("durationMs")?.toLong()
 
-            val meta = MediaMetadataCompat.Builder()
+            // 在现有 metadata 基础上合并更新：
+            // - 保留 audio_service 设置的 duration / art / mediaId
+            // - 只更新 DISPLAY_TITLE / DISPLAY_DESCRIPTION 为歌词
+            // - mediaId 保持不变，避免车机认为"快速切歌"而忽略歌词更新
+            val existing = session.controller?.metadata
+            val builder = if (existing != null) {
+                MediaMetadataCompat.Builder(existing)
+            } else {
+                MediaMetadataCompat.Builder()
+                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+                    .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
+            }
+
+            builder
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
-                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
-                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
-                .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, artist)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
-                .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, title)
-                .build()
+
+            // 只在 durationMs 提供且有效时更新，否则保留 existing 的 duration
+            if (durationMs != null && durationMs > 0) {
+                builder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
+            } else if (existing != null) {
+                val existingDuration = existing.getLong(MediaMetadataCompat.METADATA_KEY_DURATION)
+                if (existingDuration > 0) {
+                    builder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, existingDuration)
+                }
+            }
+
+            val meta = builder.build()
             session.setMetadata(meta)
             result.success(true)
         } catch (e: Exception) {
