@@ -23,6 +23,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   String _baseMediaId = '';
   DateTime _lastLyricPush = DateTime(0);
   String? _lastLyricText;
+  bool _btLyricCached = true;
 
   AudioPlayerHandler({
     required AudioPlayer player,
@@ -115,10 +116,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     _lastLyricText = text;
     _lastLyricPush = DateTime.now();
 
-    unawaited(_readBluetoothLyricEnabled().then((enabled) {
-      if (!enabled) return;
-      _doPushLyric(line, text);
-    }));
+    if (!_btLyricCached) return;
+    _doPushLyric(line, text);
   }
 
   void _doPushLyric(String? line, String text) {
@@ -127,6 +126,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final cur = _currentItem!;
       final dur = _player.duration;
 
+      // 仅更新本地 _currentItem（不调 mediaItem.add）
       _currentItem = MediaItem(
         id: _baseMediaId,
         title: hasLine ? line : cur.title,
@@ -139,9 +139,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         displayDescription: hasLine ? line : (cur.album ?? ''),
         extras: {'lyric': line ?? ''},
       );
-      // 灵动岛/通知栏：audio_service 读 this.mediaMetadata
-      mediaItem.add(_currentItem);
-      // 车机蓝牙：直接写 session.setMetadata()，走 AVRCP
+      // 不调 mediaItem.add()！
+      // audio_service 的 setMediaItem → Java new Builder() → session.setMetadata()
+      // 会覆盖 MethodChannel 刚设的歌词 metadata，导致蓝牙歌词不更新。
+      // 只用 MethodChannel 直接写 session.setMetadata()，走 AVRCP。
       MediaSessionService().updateLyric(
         title: hasLine ? line! : cur.title,
         artist: cur.artist ?? '',
@@ -252,6 +253,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> play() async {
     await _player.play();
+    _btLyricCached = await _readBluetoothLyricEnabled();
     _updatePosRefreshTimer();
   }
 
