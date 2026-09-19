@@ -8,7 +8,7 @@
 
 **波点音乐（Bodian Music）** 是一款采用 Flutter 框架开发的开源 Android 音乐播放器，旨在为开发者提供一个完整、可学习、可二次开发的移动音乐应用范例。
 
-类似于 **洛雪音乐（LX Music / lx-music）**、**小Q**、**小W** 等优秀产品，波点音乐在 **蓝牙/车机歌词同步**、**全屏 KTV 歌词**、**频谱可视化**、**NAS 音乐库** 等核心功能上做了完整的实现，适合作为 Flutter 实战项目的参考。
+项目在 **蓝牙/车机歌词同步**、**全屏 KTV 歌词**、**频谱可视化**、**NAS 音乐库** 等核心功能上做了完整的实现，适合作为 Flutter 实战项目的参考。
 
 **学习价值**：如果你正在学习 Flutter，本项目涵盖了音频播放、后台服务（audio_service）、蓝牙 AVRCP、JavaScript 引擎、自定义渲染、WebDAV 协议等众多实战技术点。
 
@@ -24,14 +24,14 @@
 
 ### 视觉与歌词
 - 同步滚动歌词（支持逐字 / 逐行两种模式）
-- **PV 全屏 KTV 歌词**（卡拉OK 动态扫字效果）
+- **PV 全屏 KTV 歌词**（卡拉OK 动态扫字效果 + 缓慢渐变流动背景）
 - 频谱可视化动画（8 种特效：柱状/波浪/圆环/脉冲/粒子/火焰/极光/水波）
 - 沉浸式播放器 UI（新拟态风格）
 - 多套主题色板（深色 / 浅色模式）
 
 ### 车载 / 蓝牙
-- **蓝牙歌词同步**（AVRCP 协议，与 小Q、洛雪音乐一致）
-- **灵动岛歌词显示**（Android Dynamic Island）
+- **蓝牙歌词同步**（AVRCP 协议，通过 MediaSession 推送歌词到车机/蓝牙耳机）
+- **灵动岛歌词显示**（Android Dynamic Island / 通知栏歌词）
 - 车机自动同步媒体控制
 - **Jovi InCar / HiCar 支持**（通过 MediaSession 同步队列与播放索引，车机可浏览播放列表、显示播放卡片、控制切歌）
 
@@ -141,18 +141,19 @@ lib/
 
 ### 1. 蓝牙/车机歌词同步
 
-参考 `androidx/media` Issue #430 的解决方案：
-- 通过 `audio_service` 的 `mediaItem` 更新 `title` 字段
-- 同时推 `playbackState`（position 微调）触发车机重新读取 metadata
-- 仅在歌词行变化时推送（与 小Q、洛雪音乐 一致的行为）
+通过双路径推送歌词到 MediaSession：
+- **灵动岛/通知栏**：`mediaItem.add()` 更新 audio_service 内部 metadata
+- **车机蓝牙**：MethodChannel 直接写 `MediaSessionCompat.setMetadata()`，走 AVRCP 协议
+- 定时广播 `playbackState`（每 500ms），触发车机重新读取 metadata
+- 仅在歌词行变化时推送，避免频繁更新
 
 ### 2. PV KTV 歌词扫字
 
-使用自定义 `LerpScanText` 组件（见 `lib/widgets/large_ktv_overlay.dart`），逐字符 `Color.lerp` 实现无 ShaderMask / ClipRect 的扫字效果，零伪影。
+使用自定义 `LerpScanText` 组件（见 `lib/widgets/large_ktv_overlay.dart`），逐字符 `Color.lerp` 实现无 ShaderMask / ClipRect 的扫字效果，零伪影。全屏 KTV 模式配有缓慢流动的渐变背景动画，营造沉浸氛围。
 
 ### 3. 频谱可视化
 
-通过 Android 原生 Visualizer API 直接抓取 FFT 数据，使用 Dart Canvas + 自定义 Painter 渲染8种特效。详细实现见 `lib/widgets/audio_visualizer.dart`。
+通过 Android 原生 Visualizer API 直接抓取 FFT 数据，使用 Dart Canvas + 自定义 Painter 渲染 8 种特效。详细实现见 `lib/widgets/audio_visualizer.dart`。
 
 ### 4. WebDAV NAS 音乐库
 
@@ -184,18 +185,6 @@ lib/
 5. 本项目开发者保留随时删除本项目的权利，恕不另行通知。
 6. 如有任何疑问或侵权问题，请联系删除。
 7. 下载、安装或使用本项目，即表示您已阅读并同意上述声明。
-
-**项目内涉及的"洛雪音乐""LX Music""小Q""小W"等名称仅为功能对比说明，不代表本项目与上述产品有任何官方关联或合作关系。**
-
-## 相关项目
-
-如果你对本项目感兴趣，也可以看看以下优秀的开源音乐项目：
-
-- [洛雪音乐 (lx-music-mobile)](https://github.com/lyswhut/lx-music-mobile) - 洛雪音乐移动版（Electron + Vue）
-- [lx-music-source](https://github.com/lyswhut/lx-music-source) - 洛雪音乐音源脚本仓库
-- [YesPlayMusic](https://github.com/qier222/YesPlayMusic) - 高颜值的第三方小W平台播放器
-- [BlackHole](https://github.com/Sangwan5688/BlackHole) - Flutter 实现的音乐播放器
-- [SPlayer](https://github.com/jayjd/SPlayer) - Vue 实现的简约音乐播放器
 
 ## 开源许可
 
