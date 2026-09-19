@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:async';
 import '../core/utils/logger.dart';
 import 'package:flutter/services.dart';
-import 'dart:async';
 import 'dart:ui' show AppExitResponse, PlatformDispatcher;
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
 import 'core/storage/storage_service.dart';
 import 'core/storage/hive_adapters.dart';
@@ -11,6 +11,7 @@ import 'core/router/app_router.dart';
 
 import 'services/api/user_api_service.dart';
 import 'services/player/player_service.dart';
+import 'services/sync/sync_service.dart';
 import 'providers/app_providers.dart';
 import 'providers/settings_provider.dart';
 
@@ -72,6 +73,18 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
   AppLifecycleListener? _lifecycle;
   Timer? _persistFallbackTimer;
 
+  /// 歌单/不喜欢列表变化时推送到同步服务器（仅在已连接且开启同步时）
+  void _tryPushSync() {
+    try {
+      final settings = ref.read(settingsProvider);
+      if (!settings.enableSync) return;
+      final svc = SyncService();
+      if (!svc.isConnected) return;
+      unawaited(svc.syncLists(ref.read(playlistProvider)));
+      unawaited(svc.syncDislikeList(ref.read(dislikeListProvider)));
+    } catch (_) {}
+  }
+
   void _persistPlaylist() {
     try {
       PlayerService.instance.savePlaylistNow();
@@ -93,6 +106,17 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
     }
   }
 
+  /// 启动时若配置了同步服务器且开启同步，自动连接
+  void _tryConnectSync(AppSettings settings) {
+    if (!settings.enableSync || settings.syncHost.isEmpty || settings.syncCode.isEmpty) return;
+    try {
+      SyncService().connect(host: settings.syncHost, syncCode: settings.syncCode);
+      logDebug('[Init] 同步服务自动连接: ${settings.syncHost}');
+    } catch (e) {
+      logDebug('[Init] 同步连接失败: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -102,6 +126,7 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
         ref.read(recentPlayedProvider.notifier).addRecent(music);
       } catch (_) {}
     };
+    // 歌单/不喜欢的列表变化时，推送到同步服务器（用 ref.listen 在 build 中触发）
     // 首帧后激活自定义源脚本（JS引擎初始化耗时，不阻塞冷启动首屏）+ 同步音质设置
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
@@ -110,6 +135,8 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
         final quality = ref.read(settingsProvider).quality;
         PlayerService.instance.setPreferredQuality(quality);
         PlayerService.instance.setPrefetchEnabled(ref.read(settingsProvider).gaplessPlayback);
+        // 启动时若配置了同步服务器且开启同步，自动连接
+        _tryConnectSync(ref.read(settingsProvider));
       } catch (e) {
         logDebug('[Init] 初始化流程异常: $e');
       }
@@ -160,6 +187,9 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
     // MaterialApp 求值 light/dark 主题的顺序不定，会把 isDark 残留为 true）
     AppColors.isDark = settings.isDarkMode;
     // Key 绑定主题模式：切换深浅色时强制整树重建
+      // 歌单 / 不喜欢列表变化时推送到同步服务器
+      ref.listen(playlistProvider, (_, _) => _tryPushSync());
+      ref.listen(dislikeListProvider, (_, _) => _tryPushSync());
       // （页面用 AppColors 静态色板，不依赖 Theme inherited，不会随 Theme 变化自动重建）
     return MaterialApp.router(
       key: ValueKey('app_theme_${settings.isDarkMode}'),

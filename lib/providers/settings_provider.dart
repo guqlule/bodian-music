@@ -13,6 +13,7 @@ class AppSettings {
   final bool showDesktopLyric;
   final bool enableSync;
   final String syncHost;
+  final String syncCode;
   final int playMode;
   final bool gaplessPlayback;
   final bool enableBluetoothLyric;
@@ -29,6 +30,7 @@ class AppSettings {
     this.showDesktopLyric = false,
     this.enableSync = false,
     this.syncHost = '',
+    this.syncCode = '',
     this.playMode = 0,
     this.enableBluetoothLyric = true,
   });
@@ -45,6 +47,7 @@ class AppSettings {
     bool? showDesktopLyric,
     bool? enableSync,
     String? syncHost,
+    String? syncCode,
     int? playMode,
     bool? enableBluetoothLyric,
   }) {
@@ -60,6 +63,7 @@ class AppSettings {
       showDesktopLyric: showDesktopLyric ?? this.showDesktopLyric,
       enableSync: enableSync ?? this.enableSync,
       syncHost: syncHost ?? this.syncHost,
+      syncCode: syncCode ?? this.syncCode,
       playMode: playMode ?? this.playMode,
       enableBluetoothLyric: enableBluetoothLyric ?? this.enableBluetoothLyric,
     );
@@ -78,6 +82,7 @@ class AppSettings {
       'showDesktopLyric': showDesktopLyric,
       'enableSync': enableSync,
       'syncHost': syncHost,
+      'syncCode': syncCode,
       'playMode': playMode,
       'enableBluetoothLyric': enableBluetoothLyric,
     };
@@ -96,6 +101,7 @@ class AppSettings {
       showDesktopLyric: json['showDesktopLyric'] ?? false,
       enableSync: json['enableSync'] ?? false,
       syncHost: json['syncHost'] ?? '',
+      syncCode: json['syncCode'] ?? '',
       playMode: json['playMode'] ?? 0,
       enableBluetoothLyric: json['enableBluetoothLyric'] ?? true,
     );
@@ -179,6 +185,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
 
   void setSyncHost(String host) {
     state = state.copyWith(syncHost: host);
+    _saveSettings();
+  }
+
+  void setSyncConfig(String host, String code) {
+    state = state.copyWith(syncHost: host, syncCode: code, enableSync: true);
     _saveSettings();
   }
 

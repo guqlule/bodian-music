@@ -42,7 +42,7 @@ class PlayerService {
   AudioPlayerHandler? _mediaHandler;
   final Completer<void> _mediaSessionReady = Completer<void>();
   // 音质偏好：始终按最高音质请求，脚本/MusicUrlService 内部会自动降级
-  String _preferredQuality = 'flac';
+  String _preferredQuality = '320k';
   bool _prefetchEnabled = true;
   void setPrefetchEnabled(bool enabled) => _prefetchEnabled = enabled;
   void setPreferredQuality(String settingsQuality) {
@@ -1116,10 +1116,38 @@ class PlayerService {
       if (music.source == 'kw' && ((music.songId?.isNotEmpty ?? false) || music.id.isNotEmpty)) {
         return await _getKwCover(music);
       }
-      // 通用：通过歌词API的返回中可能包含封面
+      // 通用兜底：QQ 音乐/网易云等源用 songName+singer 搜索封面
+      return await _getGenericCover(music);
     } catch (e) {
       logDebug('[Cover] 获取封面失败: $e');
     }
+    return null;
+  }
+
+  /// 通用封面兜底：用酷我搜索接口按 歌名+歌手 查封面
+  Future<String?> _getGenericCover(MusicInfo music) async {
+    try {
+      final kw = Uri.encodeComponent('${music.name} ${music.singer}');
+      final url = Uri.parse(
+        'https://m.kuwo.cn/r/www/fetchSuggest?prefix=$kw&key=p',
+      );
+      final resp = await http.get(url, headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)',
+        'Referer': 'https://m.kuwo.cn/',
+      }).timeout(const Duration(seconds: 6));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = data['data']?['list'];
+        if (list is List && list.isNotEmpty) {
+          for (final item in list) {
+            if (item is Map) {
+              final pic = item['pic']?.toString();
+              if (pic != null && pic.isNotEmpty && pic.startsWith('http')) return pic;
+            }
+          }
+        }
+      }
+    } catch (_) {}
     return null;
   }
 
@@ -1127,7 +1155,7 @@ class PlayerService {
     try {
       final url = Uri.parse(
         'https://wwwapi.kugou.com/yy/index.php?r=play/getdata'
-        '&hash=${music.songId}&dfid=&mid=0&platid=4&_= ${DateTime.now().millisecondsSinceEpoch}',
+        '&hash=${music.songId}&dfid=&mid=0&platid=4&_=${DateTime.now().millisecondsSinceEpoch}',
       );
       final response = await http.get(url, headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',

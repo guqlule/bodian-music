@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive/hive.dart';
 import '../core/storage/storage_service.dart';
 import '../models/music_model.dart';
 import '../models/playlist_model.dart';
 import '../services/player/player_service.dart';
+import '../services/sync/sync_service.dart';
 import '../core/utils/logger.dart';
 
 // Player Service Provider
@@ -36,7 +38,13 @@ final sleepTimerActiveProvider = _psStream<bool>((p) => p.isSleepTimerActiveStre
 final sleepTimerRemainingProvider = _psStream<Duration?>((p) => p.sleepTimerRemainingStream);
 final lyricProvider = _psStream<Map<String, String?>?>((p) => p.lyricStream);
 
-// Current Playlist Provider（带 distinct 逻辑，单独写）
+// Sync Service Providers
+final syncServiceProvider = Provider<SyncService>((ref) => SyncService());
+final syncConnectionProvider = StreamProvider<SyncConnectionState>((ref) {
+  final svc = ref.watch(syncServiceProvider);
+  return svc.connectionStateStream;
+});
+
 final currentPlaylistProvider = StreamProvider<List<MusicInfo>>((ref) {
   final p = ref.watch(playerServiceProvider);
   return p.playlistStream.distinct((a, b) {

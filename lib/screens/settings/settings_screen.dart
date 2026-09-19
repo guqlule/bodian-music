@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/player/player_service.dart';
+import '../../services/sync/sync_service.dart';
 import '../../core/storage/storage_service.dart';
 import '../../core/theme/app_theme.dart';
 
@@ -104,6 +105,14 @@ class SettingsScreen extends ConsumerWidget {
                 subtitle: '管理音源脚本',
                 onTap: () => context.push('/user-api'),
               ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // 同步卡片
+          _buildSectionCard(
+            title: '同步',
+            children: [
+              _buildSyncTile(context, ref, settings, settingsNotifier),
             ],
           ),
           const SizedBox(height: 16),
@@ -336,6 +345,92 @@ class SettingsScreen extends ConsumerWidget {
             child: Text('取消', style: TextStyle(color: AppColors.textSecondary)),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSyncTile(BuildContext context, WidgetRef ref, AppSettings settings,
+      SettingsNotifier settingsNotifier) {
+    return _buildTapTile(
+      icon: Icons.cloud_sync_rounded,
+      title: '歌单同步',
+      subtitle: settings.syncHost.isNotEmpty ? settings.syncHost : '配置同步服务器',
+      onTap: () => _showSyncDialog(context, ref, settingsNotifier),
+    );
+  }
+
+  void _showSyncDialog(
+      BuildContext context,
+      WidgetRef ref,
+      SettingsNotifier settingsNotifier) {
+    final settings = ref.read(settingsProvider);
+    final service = SyncService();
+    final hostCtrl = TextEditingController(text: settings.syncHost);
+    final codeCtrl = TextEditingController(text: settings.syncCode);
+    service.connectionStateStream.listen((s) {
+      if (s == SyncConnectionState.error) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('同步连接失败，请检查地址/同步码')),
+        );
+      }
+    });
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('歌单同步'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: hostCtrl,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: '服务器地址',
+                    hintText: '192.168.1.100:8080',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: codeCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '同步码',
+                    hintText: '与电脑端保持一致',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '连接后自动双向同步歌单与播放记录',
+                  style: TextStyle(color: AppColors.textHint, fontSize: 11),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  final host = hostCtrl.text.trim();
+                  final code = codeCtrl.text.trim();
+                  if (host.isEmpty || code.isEmpty) return;
+                  settingsNotifier.setSyncConfig(host, code);
+                  try {
+                    await service.connect(host: host, syncCode: code);
+                  } catch (_) {}
+                  if (!context.mounted) return;
+                  Navigator.pop(context);
+                },
+                child: Text('保存并连接', style: const TextStyle(color: Colors.blue)),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
