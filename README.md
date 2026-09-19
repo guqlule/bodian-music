@@ -17,7 +17,7 @@
 ### 播放相关
 - 在线音乐搜索与试听
 - 多音质切换（标准 / 高品 / 无损 / Hi-Res）
-- 用户自定义 API 脚本（JavaScript，支持扩展音源）
+- 用户自定义 API 脚本（JavaScript，支持扩展音源，可导入洛雪音乐音源文件）
 - 本地音乐扫描与管理
 - **WebDAV NAS 音乐库**（支持群晖 Synology、威联通 QNAP、Nextcloud、Alist、Rclone 等）
 - 均衡器调节
@@ -170,7 +170,7 @@ lib/
 
 ### 6. 用户自定义 API 脚本
 
-使用 `flutter_js` 在 Dart 中嵌入 JavaScript 引擎，允许用户编写自定义脚本扩展音源。脚本可读取全局变量（如 `__lx_init_data__`、`__lx_request_queue__`）与原生层通信。
+使用 `flutter_js` 在 Dart 中嵌入 JavaScript 引擎，允许用户编写自定义脚本扩展音源。支持直接导入 `.js` 音源脚本文件，兼容洛雪音乐音源格式，无需手动适配即可使用社区共享的音源。
 
 ---
 
