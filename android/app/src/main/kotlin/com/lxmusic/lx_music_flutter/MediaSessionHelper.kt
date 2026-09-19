@@ -41,17 +41,8 @@ class MediaSessionHelper {
             val artist = call.argument<String>("artist") ?: ""
             val album = call.argument<String>("album") ?: ""
             val lyric = call.argument<String>("lyric") ?: ""
-            val durationMs = call.argument<Number>("durationMs")?.toLong()
 
-            // 在现有 metadata 上合并更新，避免覆盖 audio_service 设置的 duration 等字段
-            val existing = session.controller?.metadata
-            val builder = if (existing != null) {
-                MediaMetadataCompat.Builder(existing)
-            } else {
-                MediaMetadataCompat.Builder()
-            }
-
-            builder
+            val meta = MediaMetadataCompat.Builder()
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
                 .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
                 .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
@@ -59,18 +50,7 @@ class MediaSessionHelper {
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, artist)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
                 .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, title)
-
-            if (durationMs != null && durationMs > 0) {
-                builder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
-            } else if (existing != null) {
-                // 保留已有的 duration
-                val existingDuration = existing.getLong(MediaMetadataCompat.METADATA_KEY_DURATION)
-                if (existingDuration > 0) {
-                    builder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, existingDuration)
-                }
-            }
-
-            val meta = builder.build()
+                .build()
             session.setMetadata(meta)
             result.success(true)
         } catch (e: Exception) {
