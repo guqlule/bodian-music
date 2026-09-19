@@ -23,8 +23,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   String _baseMediaId = '';
   DateTime _lastLyricPush = DateTime(0);
   String? _lastLyricText;
-  /// 缓存的"蓝牙歌词"开关。播放期间读取一次，避免 500ms tick 频繁读 SharedPreferences。
-  bool _btLyricCached = true;
 
   AudioPlayerHandler({
     required AudioPlayer player,
@@ -37,7 +35,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   StreamSubscription? _playbackSub;
   Timer? _posRefreshTimer;
 
-
+  /// 缓存的"蓝牙歌词"开关。播放期间读取一次，避免 500ms tick 频繁读 SharedPreferences。
+  bool _btLyricCached = true;
 
   /// 是否启用蓝牙/车机歌词推送。从 SharedPreferences 读取。
   Future<bool> _readBluetoothLyricEnabled() async {
@@ -60,9 +59,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   }
 
   /// 古早车机蓝牙只在 playbackState position 变化时才刷新显示。
-  /// 同时驱动灵动岛/通知栏进度条，必须常开。
   void _updatePosRefreshTimer() {
-    if (_player.playing) {
+    if (_player.playing && _btLyricCached) {
       _posRefreshTimer ??= Timer.periodic(
         const Duration(milliseconds: 500),
         (_) => _broadcastState(),
@@ -88,15 +86,24 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     _baseMediaId = music.id;
     _lastLyricText = null;
     try {
+      final subtitle = '${music.singer} · ${music.album}';
+      Uri? artUri;
+      if (music.imgUrl != null && music.imgUrl!.isNotEmpty) {
+        if (music.source == 'local') {
+          artUri = Uri.file(music.imgUrl!);
+        } else {
+          artUri = Uri.tryParse(music.imgUrl!);
+        }
+      }
       final item = MediaItem(
         id: music.id,
         title: music.name,
         artist: music.singer,
         album: music.album,
-        artUri: _buildArtUri(music),
+        artUri: artUri,
         duration: music.duration > 0 ? Duration(milliseconds: music.duration) : null,
         displayTitle: music.name,
-        displaySubtitle: '${music.singer} · ${music.album}',
+        displaySubtitle: subtitle,
         displayDescription: music.album,
       );
       _currentItem = item;
