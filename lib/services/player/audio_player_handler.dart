@@ -23,6 +23,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   String _baseMediaId = '';
   DateTime _lastLyricPush = DateTime(0);
   String? _lastLyricText;
+  /// 缓存的"蓝牙歌词"开关。播放期间读取一次，避免 500ms tick 频繁读 SharedPreferences。
   bool _btLyricCached = true;
 
   AudioPlayerHandler({
@@ -60,7 +61,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
   /// 古早车机蓝牙只在 playbackState position 变化时才刷新显示。
   void _updatePosRefreshTimer() {
-    if (_player.playing) {
+    if (_player.playing && _btLyricCached) {
       _posRefreshTimer ??= Timer.periodic(
         const Duration(milliseconds: 500),
         (_) => _broadcastState(),
@@ -116,39 +117,36 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     _lastLyricText = text;
     _lastLyricPush = DateTime.now();
 
-    if (!_btLyricCached) return;
-    _doPushLyric(line, text);
+    unawaited(_readBluetoothLyricEnabled().then((enabled) {
+      _btLyricCached = enabled;
+      if (!enabled) return;
+      _doPushLyric(line, text);
+    }));
   }
 
   void _doPushLyric(String? line, String text) {
     try {
       final hasLine = line != null && line.isNotEmpty;
       final cur = _currentItem!;
-      final dur = _player.duration;
 
-      // 仅更新本地 _currentItem（不调 mediaItem.add）
       _currentItem = MediaItem(
         id: _baseMediaId,
         title: hasLine ? line : cur.title,
         artist: cur.artist,
         album: cur.album ?? '',
         artUri: cur.artUri,
-        duration: dur ?? cur.duration,
+        duration: cur.duration,
         displayTitle: hasLine ? line : (cur.displayTitle ?? cur.title),
         displaySubtitle: cur.artist ?? '',
         displayDescription: hasLine ? line : (cur.album ?? ''),
         extras: {'lyric': line ?? ''},
       );
-      // 不调 mediaItem.add()！
-      // audio_service 的 setMediaItem → Java new Builder() → session.setMetadata()
-      // 会覆盖 MethodChannel 刚设的歌词 metadata，导致蓝牙歌词不更新。
-      // 只用 MethodChannel 直接写 session.setMetadata()，走 AVRCP。
+
       MediaSessionService().updateLyric(
         title: hasLine ? line! : cur.title,
         artist: cur.artist ?? '',
         album: cur.album ?? '',
         lyric: text,
-        durationMs: (dur ?? cur.duration)?.inMilliseconds,
       );
     } catch (_) {}
   }
