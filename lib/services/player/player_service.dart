@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io' as io;
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
@@ -142,6 +143,11 @@ class PlayerService {
       final music = _currentMusicController.value;
       if (music != null && (music.source == 'local' || music.source == 'webdav') && duration != null && duration.inMilliseconds > 0) {
         _localMusicService.updateSongDuration(music.id, duration.inMilliseconds);
+      }
+      // 本地歌曲：用文件大小 ÷ 时长 估算实际比特率，显示到播放页
+      if (music != null && music.source == 'local' && duration != null && duration.inMilliseconds > 0) {
+        final q = _estimateLocalQuality(music.songUrl, duration.inMilliseconds);
+        if (q.isNotEmpty) _qualityController.add(q);
       }
       // 实际播放时长已知时，更新 MediaItem 以让灵动岛/车机显示进度条
       // music.duration 经常为 0（API 未返回），但实际音频有完整时长
@@ -303,6 +309,31 @@ class PlayerService {
     _mediaSessionReady.future.then((_) {
       _mediaHandler?.updateDuration(duration);
     }).catchError((_) {});
+  }
+
+  /// 本地歌曲：用 文件大小 × 8 ÷ 时长 估算平均比特率，映射到现有 4 档
+  /// 返回 '128k' / '320k' / 'flac' / 'flac24bit' / ''（估算失败）
+  String _estimateLocalQuality(String? path, int durationMs) {
+    if (path == null || path.isEmpty || durationMs <= 0) return '';
+    try {
+      final f = io.File(path);
+      if (!f.existsSync()) return '';
+      final sizeBytes = f.lengthSync();
+      if (sizeBytes <= 0) return '';
+      final bps = sizeBytes * 8 / durationMs * 1000; // 平均比特率 bps
+      final kbps = bps / 1000;
+      final lower = path.toLowerCase();
+      final isLossless =
+          lower.endsWith('.flac') || lower.endsWith('.ape') || lower.endsWith('.wav');
+      if (isLossless) {
+        return kbps >= 4000 ? 'flac24bit' : 'flac';
+      }
+      if (kbps >= 256) return '320k';
+      if (kbps >= 96) return '128k';
+      return '128k';
+    } catch (_) {
+      return '';
+    }
   }
 
   // 车机通知栏歌词
@@ -768,6 +799,9 @@ class PlayerService {
 
     try {
       String? url;
+
+      // 切歌先清音质徽章，等新档位确定（本地估算 / API 实际）再回填，避免残留上一首
+      _qualityController.add('');
 
       // 本地音乐/WebDAV 直接使用本地路径或 HTTP URL
       if (music.source == 'local' || music.source == 'webdav') {
