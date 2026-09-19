@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:math';
 import '../core/theme/app_theme.dart';
 import 'dart:ui' as ui;
@@ -11,7 +11,7 @@ enum VisualizerEffect {
   circle('圆环'),
   ring('脉冲'),
   particles('粒子'),
-  flame('火焰'),
+  fireworks('烟花'),
   aurora('极光'),
   water('水波');
 
@@ -104,10 +104,8 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
   final List<double> _peaks = [];
   final List<_Particle> _particles = [];
   final List<_CosmicStar> _cosmicStars = [];
-  final List<_Particle> _flameParticles = [];
-  final List<_FlameTongue> _flameTongues = [];
-  final List<_Ember> _embers = [];
-  final List<_SmokeWisp> _smokeWisps = [];
+  final List<_Firework> _fireworks = [];
+  final List<_FireworkSpark> _fireworkSparks = [];
   final List<_AuroraCurtain> _auroraCurtains = [];
   final List<_AuroraStar> _auroraStars = [];
   final List<_Bubble> _bubbles = [];
@@ -249,8 +247,8 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
         return CustomPaint(painter: _RingPainter(state: this, repaint: _repaint));
       case VisualizerEffect.particles:
         return CustomPaint(painter: _ParticlePainter(state: this, repaint: _repaint));
-      case VisualizerEffect.flame:
-        return CustomPaint(painter: _FlamePainter(state: this, repaint: _repaint));
+      case VisualizerEffect.fireworks:
+        return CustomPaint(painter: _FireworksPainter(state: this, repaint: _repaint));
       case VisualizerEffect.aurora:
         return CustomPaint(painter: _AuroraPainter(state: this, repaint: _repaint));
       case VisualizerEffect.water:
@@ -278,26 +276,24 @@ class _CosmicStar {
   });
 }
 
-class _FlameTongue {
-  double x, baseY, width, height, sway, swaySpeed, swayAmp, life;
-  int layer;
-  _FlameTongue({
-    required this.x, required this.baseY, required this.width, required this.height,
-    required this.sway, required this.swaySpeed, required this.swayAmp,
-    required this.life, this.layer = 0,
+class _Firework {
+  double x, y, targetY, vy, size, life, hue;
+  bool exploded;
+  _Firework({
+    required this.x, required this.y, required this.targetY,
+    required this.vy, required this.size, required this.life,
+    required this.hue, this.exploded = false,
   });
 }
 
-class _Ember {
-  double x, y, vx, vy, size, life, maxLife;
-  _Ember({required this.x, required this.y, required this.vx, required this.vy,
-    required this.size, required this.life, this.maxLife = 1.0});
-}
-
-class _SmokeWisp {
-  double x, y, vx, vy, size, life, opacity;
-  _SmokeWisp({required this.x, required this.y, required this.vx, required this.vy,
-    required this.size, required this.life, required this.opacity});
+class _FireworkSpark {
+  double x, y, vx, vy, size, life, maxLife, hue;
+  _FireworkSpark({
+    required this.x, required this.y,
+    required this.vx, required this.vy,
+    required this.size, required this.life,
+    required this.maxLife, required this.hue,
+  });
 }
 
 class _AuroraCurtain {
@@ -893,220 +889,124 @@ class _ParticlePainter extends CustomPainter {
   bool shouldRepaint(covariant _ParticlePainter old) => true;
 }
 
-// ==================== 烈焰风暴 ====================
+// ==================== 烟花 ====================
 
-final Paint _flameBaseGlowPaint = Paint()..style = PaintingStyle.fill;
-final Paint _flamePaint = Paint()..style = PaintingStyle.fill;
-final Paint _flameTonguePaint = Paint()..style = PaintingStyle.stroke..strokeWidth = 1.0;
-final Paint _flameEmberPaint = Paint()..style = PaintingStyle.fill;
-final Paint _flameSmokePaint = Paint()..style = PaintingStyle.fill;
-final Paint _flameWavePaint = Paint()..style = PaintingStyle.stroke..strokeWidth = 1.0;
-// 复用的 Path 缓存：每帧 3 层 × 5 舌 = 15 次 Path() 分配 → 改为 reset()
-final Path _flamePath1 = Path();
-final Path _flameWavePath = Path(); // 复用：6 次/帧热浪 Path() 分配
-final Path _cosmicTrailPath = Path(); // 复用：24 次/帧恒星尾迹 Path() 分配
+final Paint _fwBgPaint = Paint()..style = PaintingStyle.fill;
+final Paint _fwRocketPaint = Paint()..style = PaintingStyle.fill;
+final Paint _fwSparkPaint = Paint()..style = PaintingStyle.fill;
+final Paint _fwTrailPaint = Paint()..style = PaintingStyle.stroke..strokeWidth = 1.5;
+final Path _fwTrailPath = Path();
+final Path _cosmicTrailPath = Path();
 
-// 静态常量配置：避免每帧分配 List<Map>
-class _FlameLayerCfg {
-  final Color colorInner;
-  final Color colorOuter;
-  final double baseHeight;
-  final double baseWidth;
-  final double speed;
-  final double amp;
-  const _FlameLayerCfg(this.colorInner, this.colorOuter, this.baseHeight, this.baseWidth, this.speed, this.amp);
-}
-
-const List<_FlameLayerCfg> _flameLayerConfigs = [
-  _FlameLayerCfg(Colors.white, Color(0xFFFFCC44), 0.35, 0.06, 0.18, 0.02),
-  _FlameLayerCfg(Color(0xFFFF8800), Color(0xFFCC3300), 0.28, 0.12, 0.12, 0.035),
-  _FlameLayerCfg(Color(0xFFCC2200), Color(0xFF661100), 0.20, 0.20, 0.08, 0.04),
-];
-
-class _FlamePainter extends CustomPainter {
+class _FireworksPainter extends CustomPainter {
   final _AudioVisualizerState state;
-  _FlamePainter({required this.state, required super.repaint});
+  _FireworksPainter({required this.state, required super.repaint});
 
   @override
   void paint(Canvas canvas, Size size) {
     _paintBg(canvas, size, state._spectrum.volume);
     final w = size.width;
     final h = size.height;
-    final cx = w * 0.5;
     final spectrum = state._spectrum;
     final random = state._random;
-    final frame = state._frame;
 
-    // ---- 底部辉光 ----
-    final glowIntensity = 0.22 + spectrum.volume * 0.25 + spectrum.bass * 0.15;
-    _flameBaseGlowPaint.shader = ui.Gradient.radial(
-      Offset(cx, h * 0.95), w * 0.5,
-      [
-        AppColors.primaryDark.withValues(alpha: glowIntensity),
-        AppColors.primaryDark.withValues(alpha: glowIntensity * 0.3),
-        AppColors.primaryDark.withValues(alpha: 0),
-      ],
-      [0.0, 0.4, 1.0],
-    );
-    canvas.drawCircle(Offset(cx, h * 0.95), w * 0.5, _flameBaseGlowPaint);
-
-    // ---- 火舌层 ----
-    // 三层：内核(白金) → 中层(橙) → 外层(暗红)
-    // 配置改用静态 const List（避免每帧分配 Map）
-
-    for (int li = 0; li < _flameLayerConfigs.length; li++) {
-      final cfg = _flameLayerConfigs[li];
-      final colorInner = cfg.colorInner;
-      final colorOuter = cfg.colorOuter;
-      final baseH = cfg.baseHeight;
-      final baseW = cfg.baseWidth;
-      final spd = cfg.speed;
-      final amp = cfg.amp;
-
-      // 每层 5 条火舌
-      for (int t = 0; t < 5; t++) {
-        final tFrac = t / 4.0;
-        final tongueX = cx + (tFrac - 0.5) * w * baseW * 2;
-        final tongueBaseY = h * 0.88;
-        final freqMult = 1.0 + spectrum.bass * 0.8 + spectrum.volume * 0.5;
-        final tongueH = h * baseH * freqMult * (0.6 + random.nextDouble() * 0.4);
-        final tongueW = w * baseW * (0.5 + random.nextDouble() * 0.5);
-        final sway = sin(frame * spd + t * 1.7 + li * 0.8) * amp * w;
-
-        final path = _flamePath1;
-        path.reset();
-        path.moveTo(tongueX - tongueW * 0.5, tongueBaseY);
-
-        // 左侧贝塞尔
-        path.cubicTo(
-          tongueX - tongueW * 0.8, tongueBaseY - tongueH * 0.3,
-          tongueX - tongueW * 0.3 + sway, tongueBaseY - tongueH * 0.7,
-          tongueX + sway * 0.6, tongueBaseY - tongueH,
-        );
-        // 右侧贝塞尔
-        path.cubicTo(
-          tongueX + tongueW * 0.3 + sway, tongueBaseY - tongueH * 0.7,
-          tongueX + tongueW * 0.8, tongueBaseY - tongueH * 0.3,
-          tongueX + tongueW * 0.5, tongueBaseY,
-        );
-        path.close();
-
-        // 渐变填充
-        _flamePaint.shader = ui.Gradient.linear(
-          Offset(tongueX, tongueBaseY),
-          Offset(tongueX + sway * 0.6, tongueBaseY - tongueH),
-          [
-            colorInner.withValues(alpha: 0.0),
-            colorInner.withValues(alpha: 0.35 + spectrum.bass * 0.15),
-            colorOuter.withValues(alpha: 0.5 + spectrum.volume * 0.2),
-            colorOuter.withValues(alpha: 0.0),
-          ],
-          [0.0, 0.3, 0.7, 1.0],
-        );
-        canvas.drawPath(path, _flamePaint);
-
-        // 火舌轮廓（微弱光晕）
-        _flameTonguePaint.color = colorInner.withValues(alpha: 0.12);
-        canvas.drawPath(path, _flameTonguePaint);
-      }
-    }
-
-    // ---- 飞火星 ----
-    if (spectrum.beat > 0.45 && state._embers.length < 80) {
-      for (int i = 0; i < 12; i++) {
-        state._embers.add(_Ember(
-          x: cx + (random.nextDouble() - 0.5) * w * 0.3,
-          y: h * (0.75 + random.nextDouble() * 0.1),
-          vx: (random.nextDouble() - 0.5) * 2.5,
-          vy: -(3 + random.nextDouble() * 6 + spectrum.volume * 4),
-          size: 1 + random.nextDouble() * 2.5,
-          life: 1.0,
-          maxLife: 0.5 + random.nextDouble() * 0.5,
-        ));
-      }
-    }
-    for (final e in state._embers) {
-      e.x += e.vx + sin(frame * 0.15 + e.y * 0.02) * 0.8;
-      e.y += e.vy;
-      e.vy *= 0.985;
-      e.vx *= 0.99;
-      e.life -= 0.02 / e.maxLife;
-    }
-    final em = state._embers;
-    for (int i = em.length - 1; i >= 0; i--) {
-      if (em[i].life <= 0) em.removeAt(i);
-    }
-
-    for (final e in state._embers) {
-      final alpha = e.life.clamp(0.0, 1.0);
-      // 火星：白 → 黄 → 橙（直接 int 运算，避开 Color.lerp 的中间分配）
-      final t = 1.0 - alpha;
-      final er = (0xFF * (1 - t) + 0xFF * t).round(); // 255 → 255 (白→黄)
-      final eg = (0xFF * (1 - t) + 0xAA * t).round(); // 255 → 170
-      final eb = (0xFF * (1 - t) + 0x22 * t).round(); // 255 → 34
-      // 外晕
-      _flameEmberPaint.color = Color.fromARGB(
-        ((alpha * 0.06) * 255).round(), er, eg, eb,
-      );
-      canvas.drawCircle(Offset(e.x, e.y), e.size * 4 * alpha, _flameEmberPaint);
-      // 内核
-      // 内核（直接修改画笔颜色）
-      _flameEmberPaint.color = Color.fromARGB(
-        ((alpha * 0.9) * 255).round(), er, eg, eb,
-      );
-      canvas.drawCircle(Offset(e.x, e.y), e.size * alpha, _flameEmberPaint);
-    }
-
-    // ---- 烟雾 ----
-    if (spectrum.volume > 0.05 && state._smokeWisps.length < 25) {
-      state._smokeWisps.add(_SmokeWisp(
-        x: cx + (random.nextDouble() - 0.5) * w * 0.15,
-        y: h * (0.35 + random.nextDouble() * 0.1),
-        vx: (random.nextDouble() - 0.5) * 0.6,
-        vy: -(0.5 + random.nextDouble() * 1.2),
-        size: 15 + random.nextDouble() * 25,
+    // ---- 发射新的烟花 ----
+    if (spectrum.beat > 0.4 && state._fireworks.length < 6) {
+      final hue = random.nextDouble() * 360;
+      state._fireworks.add(_Firework(
+        x: w * (0.15 + random.nextDouble() * 0.7),
+        y: h,
+        targetY: h * (0.1 + random.nextDouble() * 0.35),
+        vy: -(8 + random.nextDouble() * 6 + spectrum.volume * 5),
+        size: 2 + random.nextDouble() * 2,
         life: 1.0,
-        opacity: 0.08 + random.nextDouble() * 0.06,
+        hue: hue,
       ));
     }
-    for (final s in state._smokeWisps) {
+
+    // ---- 更新 & 绘制烟花弹 ----
+    final fw = state._fireworks;
+    for (int i = fw.length - 1; i >= 0; i--) {
+      final f = fw[i];
+      if (!f.exploded) {
+        f.y += f.vy;
+        f.vy += 0.12;
+        if (f.y <= f.targetY || f.vy >= -1) {
+          f.exploded = true;
+          _explode(f, random, spectrum);
+        } else {
+          final alpha = f.life.clamp(0.0, 1.0);
+          _fwRocketPaint.color = Color.fromARGB(
+            (alpha * 255).round(), 255, 220, 100,
+          );
+          canvas.drawCircle(Offset(f.x, f.y), f.size * alpha, _fwRocketPaint);
+          _fwTrailPaint.color = Color.fromARGB((alpha * 120).round(), 255, 200, 80);
+          _fwTrailPath.reset();
+          _fwTrailPath.moveTo(f.x, f.y);
+          _fwTrailPath.lineTo(f.x + (random.nextDouble() - 0.5) * 2, f.y - f.vy * 3);
+          canvas.drawPath(_fwTrailPath, _fwTrailPaint);
+        }
+      } else {
+        fw.removeAt(i);
+      }
+    }
+
+    // ---- 更新 & 绘制爆炸火花 ----
+    for (final s in state._fireworkSparks) {
       s.x += s.vx;
       s.y += s.vy;
-      s.size += 0.6;
-      s.life -= 0.008;
-      s.opacity *= 0.995;
+      s.vy += 0.06;
+      s.vx *= 0.99;
+      s.life -= 0.012 / s.maxLife;
     }
-    final sm = state._smokeWisps;
-    for (int i = sm.length - 1; i >= 0; i--) {
-      if (sm[i].life <= 0) sm.removeAt(i);
-    }
-
-    for (final s in state._smokeWisps) {
-      final alpha = s.life.clamp(0.0, 1.0) * s.opacity;
-      _flameSmokePaint.color = AppColors.isDark
-          ? const Color(0xFF333333).withValues(alpha: alpha)
-          : const Color(0xFF888888).withValues(alpha: alpha);
-      canvas.drawCircle(Offset(s.x, s.y), s.size, _flameSmokePaint);
+    final sp = state._fireworkSparks;
+    for (int i = sp.length - 1; i >= 0; i--) {
+      if (sp[i].life <= 0) sp.removeAt(i);
     }
 
-    // ---- 热浪扭曲（底部水平波纹线）----
-    _flameWavePaint.color = AppColors.primaryDark.withValues(alpha: 0.06 + spectrum.volume * 0.04);
-    for (int i = 0; i < 6; i++) {
-      final waveY = h * (0.82 + i * 0.025);
-      final wavePath = _flameWavePath..reset();
-      wavePath.moveTo(0, waveY);
-      for (double x = 0; x <= w; x += 3) {
-        final y = waveY + sin(x * 0.04 + frame * 0.12 + i * 0.8) * (3 + spectrum.bass * 4);
-        wavePath.lineTo(x, y);
-      }
-      canvas.drawPath(wavePath, _flameWavePaint);
+    for (final s in state._fireworkSparks) {
+      final alpha = s.life.clamp(0.0, 1.0);
+      final color = HSLColor.fromAHSL(alpha, s.hue, 0.9, 0.55 + alpha * 0.2).toColor();
+      _fwSparkPaint.color = color.withValues(alpha: alpha * 0.3);
+      canvas.drawCircle(Offset(s.x, s.y), s.size * 3 * alpha, _fwSparkPaint);
+      _fwSparkPaint.color = color;
+      canvas.drawCircle(Offset(s.x, s.y), s.size * alpha, _fwSparkPaint);
+    }
+
+    // ---- 底部环境光 ----
+    if (state._fireworkSparks.isNotEmpty || state._fireworks.isNotEmpty) {
+      final glowAlpha = (0.08 + spectrum.volume * 0.12).clamp(0.0, 0.25);
+      _fwBgPaint.shader = ui.Gradient.radial(
+        Offset(w * 0.5, h * 0.95), w * 0.6,
+        [
+          AppColors.primaryDark.withValues(alpha: glowAlpha),
+          AppColors.primaryDark.withValues(alpha: 0),
+        ],
+        [0.0, 1.0],
+      );
+      canvas.drawRect(Offset.zero & size, _fwBgPaint);
+    }
+  }
+
+  void _explode(_Firework f, Random random, SpectrumData spectrum) {
+    final count = 40 + (spectrum.volume * 30).round();
+    final speed = 3.0 + spectrum.bass * 4;
+    for (int i = 0; i < count; i++) {
+      final angle = random.nextDouble() * 2 * pi;
+      final spd = speed * (0.3 + random.nextDouble() * 0.7);
+      state._fireworkSparks.add(_FireworkSpark(
+        x: f.x, y: f.y,
+        vx: cos(angle) * spd, vy: sin(angle) * spd,
+        size: 1 + random.nextDouble() * 2,
+        life: 1.0, maxLife: 0.5 + random.nextDouble() * 0.5,
+        hue: f.hue + (random.nextDouble() - 0.5) * 30,
+      ));
     }
   }
 
   @override
-  bool shouldRepaint(covariant _FlamePainter old) => true;
+  bool shouldRepaint(covariant _FireworksPainter old) => true;
 }
-
 // ==================== 极光（模糊光线）====================
 
 final Paint _auroraPulsePaint = Paint()..style = PaintingStyle.fill;

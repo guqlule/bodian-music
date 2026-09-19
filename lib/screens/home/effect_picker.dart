@@ -15,8 +15,8 @@ IconData effectIconFor(VisualizerEffect effect) {
       return Icons.circle_outlined;
     case VisualizerEffect.particles:
       return Icons.scatter_plot_rounded;
-    case VisualizerEffect.flame:
-      return Icons.local_fire_department_rounded;
+    case VisualizerEffect.fireworks:
+      return Icons.celebration_rounded;
     case VisualizerEffect.aurora:
       return Icons.auto_awesome_rounded;
     case VisualizerEffect.water:
