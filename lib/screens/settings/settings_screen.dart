@@ -351,11 +351,41 @@ class SettingsScreen extends ConsumerWidget {
 
   Widget _buildSyncTile(BuildContext context, WidgetRef ref, AppSettings settings,
       SettingsNotifier settingsNotifier) {
+    final service = SyncService();
+    final connected = service.isConnected;
+    final subtitle = settings.syncHost.isEmpty
+        ? '配置同步服务器'
+        : (connected ? '已连接 · ${settings.syncHost}' : '未连接 · ${settings.syncHost}');
     return _buildTapTile(
-      icon: Icons.cloud_sync_rounded,
+      icon: connected ? Icons.cloud_done_rounded : Icons.cloud_sync_rounded,
       title: '歌单同步',
-      subtitle: settings.syncHost.isNotEmpty ? settings.syncHost : '配置同步服务器',
-      onTap: () => _showSyncDialog(context, ref, settingsNotifier),
+      subtitle: subtitle,
+      onTap: connected ? () => _showDisconnectDialog(context, ref, service, settingsNotifier)
+                      : () => _showSyncDialog(context, ref, settingsNotifier),
+    );
+  }
+
+  void _showDisconnectDialog(BuildContext context, WidgetRef ref, SyncService service,
+      SettingsNotifier settingsNotifier) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('断开同步'),
+        content: const Text('断开后停止双向同步，配置仍保留'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              service.disconnect();
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: Text('断开', style: const TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
     );
   }
 
