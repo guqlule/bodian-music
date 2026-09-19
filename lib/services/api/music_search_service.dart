@@ -15,11 +15,11 @@ class MusicSearchService {
     'kg': KgSearchSource(),
     'tx': TxSearchSource(),
     'wy': WySearchSource(),
-    'mg': MgSearchSource(),
   };
 
-  /// 搜索源列表 —— 对齐原版 musicSdk/index.js：五源 + 全部
-  static const List<String> availableSources = ['kw', 'kg', 'tx', 'wy', 'mg', 'all'];
+  /// 搜索源列表 —— 对齐原版 musicSdk/index.js：四源 + 全部
+  /// 注：mg（咪咕）suggest/搜索接口已 301 跳转网页版失效，故下线
+  static const List<String> availableSources = ['kw', 'kg', 'tx', 'wy', 'all'];
 
   /// 音源显示名 —— 对齐原版
   static const Map<String, String> sourceNames = {
@@ -27,7 +27,6 @@ class MusicSearchService {
     'kg': '源二',
     'tx': '源三',
     'wy': '源四',
-    'mg': '源五',
     'all': '全部',
   };
 

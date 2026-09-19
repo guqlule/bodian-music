@@ -12,6 +12,7 @@ import 'core/router/app_router.dart';
 import 'services/api/user_api_service.dart';
 import 'services/player/player_service.dart';
 import 'services/sync/sync_service.dart';
+import 'models/playlist_model.dart';
 import 'providers/app_providers.dart';
 import 'providers/settings_provider.dart';
 
@@ -72,10 +73,14 @@ class LxMusicApp extends ConsumerStatefulWidget {
 class _LxMusicAppState extends ConsumerState<LxMusicApp> {
   AppLifecycleListener? _lifecycle;
   Timer? _persistFallbackTimer;
+  StreamSubscription<List<Map<String, dynamic>>>? _remoteListsSub;
+  /// 标记：本次歌单变化来自远端拉取合并，跳过回推（防 push/pull 死循环）
+  bool _mergingRemote = false;
 
   /// 歌单/不喜欢列表变化时推送到同步服务器（仅在已连接且开启同步时）
   void _tryPushSync() {
     try {
+      if (_mergingRemote) return; // 远端合并触发的变化不回推
       final settings = ref.read(settingsProvider);
       if (!settings.enableSync) return;
       final svc = SyncService();
@@ -83,6 +88,32 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
       unawaited(svc.syncLists(ref.read(playlistProvider)));
       unawaited(svc.syncDislikeList(ref.read(dislikeListProvider)));
     } catch (_) {}
+  }
+
+  /// 服务器下发远端歌单 → 合并进本地（远端 id 不存在则新增，updateTime 更新则覆盖）
+  void _mergeRemoteLists(List<Map<String, dynamic>> remote) {
+    if (remote.isEmpty) return;
+    final local = ref.read(playlistProvider);
+    final localById = {for (final p in local) p.id: p};
+    _mergingRemote = true;
+    try {
+      final notifier = ref.read(playlistProvider.notifier);
+      for (final raw in remote) {
+        try {
+          final remotePl = PlaylistInfo.fromJson(raw);
+          if (remotePl.id.isEmpty) continue;
+          final exists = localById[remotePl.id];
+          if (exists == null) {
+            notifier.addPlaylist(remotePl);
+          } else if (remotePl.updateTime.isAfter(exists.updateTime)) {
+            notifier.updatePlaylist(remotePl);
+          }
+        } catch (_) {}
+      }
+    } finally {
+      // 给 ref.listen 一个宏任务间隙，让其读到的是合并后的最终值
+      Future.delayed(Duration.zero, () => _mergingRemote = false);
+    }
   }
 
   void _persistPlaylist() {
@@ -127,6 +158,8 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
       } catch (_) {}
     };
     // 歌单/不喜欢的列表变化时，推送到同步服务器（用 ref.listen 在 build 中触发）
+    // 服务器下发远端歌单 → 合并进本地（双向同步的拉取半边）
+    _remoteListsSub = SyncService().remoteListsStream.listen(_mergeRemoteLists);
     // 首帧后激活自定义源脚本（JS引擎初始化耗时，不阻塞冷启动首屏）+ 同步音质设置
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
@@ -176,6 +209,7 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
   void dispose() {
     _lifecycle?.dispose();
     _persistFallbackTimer?.cancel();
+    _remoteListsSub?.cancel();
     super.dispose();
   }
 

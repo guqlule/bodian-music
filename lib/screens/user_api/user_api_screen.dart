@@ -690,7 +690,6 @@ class _TestScriptDialogState extends ConsumerState<_TestScriptDialog> {
                 DropdownMenuItem(value: 'kg', child: Text('源二')),
                 DropdownMenuItem(value: 'tx', child: Text('源三')),
                 DropdownMenuItem(value: 'wy', child: Text('源四')),
-                DropdownMenuItem(value: 'mg', child: Text('源五')),
               ],
               onChanged: (value) { if (value != null) setState(() => _selectedSource = value); },
             ),

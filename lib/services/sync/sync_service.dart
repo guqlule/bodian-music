@@ -21,10 +21,13 @@ class SyncService {
   final _connectionStateController = StreamController<SyncConnectionState>.broadcast();
   final _syncProgressController = StreamController<SyncProgress>.broadcast();
   final _errorController = StreamController<String>.broadcast();
+  final _remoteListsController = StreamController<List<Map<String, dynamic>>>.broadcast();
 
   Stream<SyncConnectionState> get connectionStateStream => _connectionStateController.stream;
   Stream<SyncProgress> get syncProgressStream => _syncProgressController.stream;
   Stream<String> get errorStream => _errorController.stream;
+  /// 服务器下发的远端歌单列表（用于双向拉取，客户端合并进本地）
+  Stream<List<Map<String, dynamic>>> get remoteListsStream => _remoteListsController.stream;
 
   bool get isConnected => _isConnected;
 
@@ -51,6 +54,8 @@ class SyncService {
       _startHeartbeat();
       _isConnected = true;
       _connectionStateController.add(SyncConnectionState.connected);
+      // 连接成功自动拉取一次远端歌单（双向同步的拉取半边）
+      unawaited(requestListPull());
     } catch (e) {
       _connectionStateController.add(SyncConnectionState.error);
       _errorController.add('Connection failed: $e');
@@ -99,6 +104,17 @@ class SyncService {
         break;
       case 'error':
         _errorController.add(data['message'] ?? 'Unknown error');
+        break;
+      case 'pull_lists_result':
+        // 服务器下发远端歌单：data 是 PlaylistInfo JSON 列表
+        final raw = data['data'];
+        if (raw is List) {
+          final lists = raw
+              .whereType<Map<String, dynamic>>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList();
+          _remoteListsController.add(lists);
+        }
         break;
     }
   }
@@ -178,11 +194,25 @@ class SyncService {
     }
   }
 
+  /// 向服务器请求下发当前歌单（拉取半边）。服务器回 `pull_lists_result`。
+  Future<void> requestListPull() async {
+    if (!_isConnected) return;
+    try {
+      _channel?.sink.add(jsonEncode({
+        'type': 'pull_lists_request',
+        'clientId': _clientId,
+      }));
+    } catch (e) {
+      _errorController.add('Pull request failed: $e');
+    }
+  }
+
   void dispose() {
     disconnect();
     _connectionStateController.close();
     _syncProgressController.close();
     _errorController.close();
+    _remoteListsController.close();
   }
 }
 

@@ -25,9 +25,6 @@ class HotSearchService {
       case 'kg':
         list = await _kgHotSearch();
         break;
-      case 'mg':
-        list = await _mgHotSearch();
-        break;
       case 'tx':
       case 'wy':
         // 接口已失效（tx musicu.fcg 500001 / wy eapi chart 需登录态）
@@ -113,31 +110,7 @@ class HotSearchService {
     return result;
   }
 
-  /// 咪咕热搜 —— 对齐 mg/hotSearch.js（只取歌曲类型）
-  Future<List<String>> _mgHotSearch() async {
-    final response = await http.get(
-      Uri.parse('http://jadeite.migu.cn:7090/music_search/v3/search/hotword'),
-    ).timeout(const Duration(seconds: 8));
-
-    if (response.statusCode != 200) {
-      throw Exception('获取热搜词失败');
-    }
-    final body = jsonDecode(response.body);
-    if (body['code'] != '000000') {
-      throw Exception('获取热搜词失败');
-    }
-    final hotwords = body['data']?['hotwords'] as List? ?? [];
-    final result = <String>[];
-    for (final group in hotwords) {
-      final wordList = group['hotwordList'] as List? ?? [];
-      for (final item in wordList) {
-        if (item['resourceType']?.toString() != 'song') continue;
-        final word = item['word']?.toString() ?? '';
-        if (word.isNotEmpty) result.add(word);
-      }
-    }
-    return result;
-  }
+  /// 咪咕热搜已下线（接口 301 跳转网页版失效）
 
   String _decodeName(String str) {
     return str

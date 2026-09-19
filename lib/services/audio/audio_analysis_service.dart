@@ -83,6 +83,11 @@ class AudioAnalysisService {
   bool get isPlaying => _isPlaying;
   bool get isCapturing => _capturing;
 
+  /// 播放中但真实 FFT 数据不可用（未捕获 / 全零）时，UI 正在用模拟频谱兜底。
+  /// 与 home_screen 的 liveness 判定一致（lastFftMax > 0.004）。
+  bool get isSimulating =>
+      _isPlaying && !(isCapturing && lastFftMax > 0.004);
+
   AudioAnalysisService() {
     _channel.setMethodCallHandler(_onMethodCall);
     // 预计算频率映射表（基于 FFT 长度 1024）

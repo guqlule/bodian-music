@@ -1001,6 +1001,22 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
                     color: AppColors.primary, fontSize: 10, fontWeight: FontWeight.w600)),
                 );
               }),
+              // 频谱模拟兜底提示：真实 FFT 不可用时，可视化在跑假数据，给个 "模拟" 角标
+              Consumer(builder: (context, ref, _) {
+                final playing = ref.watch(isPlayingProvider).valueOrNull ?? false;
+                final simulating = ref.watch(audioAnalysisProvider).isSimulating;
+                if (!playing || !simulating) return const SizedBox.shrink();
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: AppNeumorphic.flat,
+                  ),
+                  child: Text('模拟', style: TextStyle(
+                    color: AppColors.textHint, fontSize: 10, fontWeight: FontWeight.w500)),
+                );
+              }),
               if (total > 0) ...[
                 const SizedBox(width: 8),
                 Container(
