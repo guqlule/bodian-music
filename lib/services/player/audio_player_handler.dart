@@ -60,8 +60,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   }
 
   /// 古早车机蓝牙只在 playbackState position 变化时才刷新显示。
+  /// 同时驱动灵动岛/通知栏进度条，必须常开。
   void _updatePosRefreshTimer() {
-    if (_player.playing && _btLyricCached) {
+    if (_player.playing) {
       _posRefreshTimer ??= Timer.periodic(
         const Duration(milliseconds: 500),
         (_) => _broadcastState(),
