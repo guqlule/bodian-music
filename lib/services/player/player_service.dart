@@ -102,9 +102,7 @@ class PlayerService {
   int _retryCount = 0;
   int _loadRequestId = 0;
   int _lyricRequestId = 0; // 歌词请求独立ID，防止旧歌词覆盖新歌
-  static const int _maxRetryCount = 2;
   static const Duration _loadTimeout = Duration(seconds: 25);
-  static const Duration _retryDelay = Duration(seconds: 3);
   final Random _random = Random();
 
   // Stream subscriptions for cleanup

@@ -4,67 +4,43 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AppSettings {
   final bool isDarkMode;
-  final bool isAutoTheme;
-  final String themeId;
   final double fontSize;
-  final String language;
   final String quality;
-  final bool playOnBoot;
-  final bool showDesktopLyric;
   final bool enableSync;
   final String syncHost;
   final String syncCode;
-  final int playMode;
   final bool gaplessPlayback;
   final bool enableBluetoothLyric;
 
   AppSettings({
     this.isDarkMode = false,
-    this.isAutoTheme = true,
-    this.themeId = 'default',
     this.fontSize = 14.0,
-    this.language = 'zh_CN',
     this.quality = '320k',
     this.gaplessPlayback = true,
-    this.playOnBoot = false,
-    this.showDesktopLyric = false,
     this.enableSync = false,
     this.syncHost = '',
     this.syncCode = '',
-    this.playMode = 0,
     this.enableBluetoothLyric = true,
   });
 
   AppSettings copyWith({
     bool? isDarkMode,
-    bool? isAutoTheme,
-    String? themeId,
     double? fontSize,
-    String? language,
     String? quality,
     bool? gaplessPlayback,
-    bool? playOnBoot,
-    bool? showDesktopLyric,
     bool? enableSync,
     String? syncHost,
     String? syncCode,
-    int? playMode,
     bool? enableBluetoothLyric,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
-      isAutoTheme: isAutoTheme ?? this.isAutoTheme,
-      themeId: themeId ?? this.themeId,
       fontSize: fontSize ?? this.fontSize,
-      language: language ?? this.language,
       quality: quality ?? this.quality,
       gaplessPlayback: gaplessPlayback ?? this.gaplessPlayback,
-      playOnBoot: playOnBoot ?? this.playOnBoot,
-      showDesktopLyric: showDesktopLyric ?? this.showDesktopLyric,
       enableSync: enableSync ?? this.enableSync,
       syncHost: syncHost ?? this.syncHost,
       syncCode: syncCode ?? this.syncCode,
-      playMode: playMode ?? this.playMode,
       enableBluetoothLyric: enableBluetoothLyric ?? this.enableBluetoothLyric,
     );
   }
@@ -72,18 +48,12 @@ class AppSettings {
   Map<String, dynamic> toJson() {
     return {
       'isDarkMode': isDarkMode,
-      'isAutoTheme': isAutoTheme,
-      'themeId': themeId,
       'fontSize': fontSize,
-      'language': language,
       'quality': quality,
       'gaplessPlayback': gaplessPlayback,
-      'playOnBoot': playOnBoot,
-      'showDesktopLyric': showDesktopLyric,
       'enableSync': enableSync,
       'syncHost': syncHost,
       'syncCode': syncCode,
-      'playMode': playMode,
       'enableBluetoothLyric': enableBluetoothLyric,
     };
   }
@@ -91,18 +61,12 @@ class AppSettings {
   factory AppSettings.fromJson(Map<String, dynamic> json) {
     return AppSettings(
       isDarkMode: json['isDarkMode'] ?? false,
-      isAutoTheme: json['isAutoTheme'] ?? true,
-      themeId: json['themeId'] ?? 'default',
       fontSize: (json['fontSize'] ?? 14.0).toDouble(),
-      language: json['language'] ?? 'zh_CN',
       quality: json['quality'] ?? '320k',
       gaplessPlayback: json['gaplessPlayback'] ?? true,
-      playOnBoot: json['playOnBoot'] ?? false,
-      showDesktopLyric: json['showDesktopLyric'] ?? false,
       enableSync: json['enableSync'] ?? false,
       syncHost: json['syncHost'] ?? '',
       syncCode: json['syncCode'] ?? '',
-      playMode: json['playMode'] ?? 0,
       enableBluetoothLyric: json['enableBluetoothLyric'] ?? true,
     );
   }
@@ -138,23 +102,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     _saveSettings();
   }
 
-  void setAutoTheme(bool isAuto) {
-    state = state.copyWith(isAutoTheme: isAuto);
-    _saveSettings();
-  }
-
-  void setThemeId(String themeId) {
-    state = state.copyWith(themeId: themeId);
-    _saveSettings();
-  }
-
   void setFontSize(double size) {
     state = state.copyWith(fontSize: size);
-    _saveSettings();
-  }
-
-  void setLanguage(String lang) {
-    state = state.copyWith(language: lang);
     _saveSettings();
   }
 
@@ -168,33 +117,13 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     _saveSettings();
   }
 
-  void setPlayOnBoot(bool enabled) {
-    state = state.copyWith(playOnBoot: enabled);
-    _saveSettings();
-  }
-
-  void setDesktopLyric(bool enabled) {
-    state = state.copyWith(showDesktopLyric: enabled);
-    _saveSettings();
-  }
-
   void setEnableSync(bool enabled) {
     state = state.copyWith(enableSync: enabled);
     _saveSettings();
   }
 
-  void setSyncHost(String host) {
-    state = state.copyWith(syncHost: host);
-    _saveSettings();
-  }
-
   void setSyncConfig(String host, String code) {
     state = state.copyWith(syncHost: host, syncCode: code, enableSync: true);
-    _saveSettings();
-  }
-
-  void setPlayMode(int mode) {
-    state = state.copyWith(playMode: mode);
     _saveSettings();
   }
 

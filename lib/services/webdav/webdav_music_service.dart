@@ -177,7 +177,8 @@ class WebdavMusicService {
     }
 
     return MusicInfo(
-      id: 'webdav_${DateTime.now().millisecondsSinceEpoch}_${name.hashCode}',
+      // 稳定 ID：远程路径 + 文件名哈希，避免重复扫描生成新 ID 破坏去重
+      id: 'webdav_${remotePath.hashCode}_$name',
       name: name,
       singer: singer,
       album: album,
