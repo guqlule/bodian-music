@@ -480,68 +480,6 @@ lx.send('inited', {
     }
   }
 });'''),
-      MapEntry('AGNES AI 音源', '''/**
- * @name AGNES AI 音源
- * @description 基于 apihub.agnes-ai.com 的音乐源
- * @version 1.0.0
- * @author lx-music
- * @homepage https://agnes-ai.com
- */
-
-const API_KEY = 'sk-jDsMN4dYY9rx2JwYGZ4PTHg61n05NZoQQXwdSLbOlBHhMg1R';
-const BASE_URL = 'https://apihub.agnes-ai.com/v1';
-
-async function request(url, options = {}) {
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer ' + API_KEY,
-    ...options.headers,
-  };
-  const resp = await fetch(url, { ...options, headers });
-  if (!resp.ok) throw new Error('HTTP ' + resp.status);
-  return resp.json();
-}
-
-lx.on('request', async({ source, action, info }) => {
-  if (action === 'musicSearch') {
-    const { keyword, page = 1, limit = 30 } = info;
-    const data = await request(BASE_URL + '/search', {
-      method: 'POST',
-      body: JSON.stringify({ keyword, source, page, limit }),
-    });
-    return { list: data.data?.list || data.list || [], total: data.data?.total || data.total || 0 };
-  }
-
-  if (action === 'musicUrl') {
-    const { musicInfo, type } = info;
-    const data = await request(BASE_URL + '/url', {
-      method: 'POST',
-      body: JSON.stringify({ id: musicInfo.songId || musicInfo.id, source: musicInfo.source, quality: type }),
-    });
-    return { type: type, url: data.data?.url || data.url || '' };
-  }
-
-  if (action === 'lyric') {
-    const { musicInfo } = info;
-    const data = await request(BASE_URL + '/lyric', {
-      method: 'POST',
-      body: JSON.stringify({ id: musicInfo.songId || musicInfo.id, source: musicInfo.source }),
-    });
-    return { lyric: data.data?.lyric || data.lyric || '', tlyric: data.data?.tlyric || data.tlyric || '' };
-  }
-
-  throw new Error('不支持的操作: ' + action);
-});
-
-lx.send('inited', {
-  sources: {
-    agnes: {
-      type: 'music',
-      actions: ['musicSearch', 'musicUrl', 'lyric'],
-      qualitys: ['128k', '320k', 'flac']
-    }
-  }
-});'''),
     ];
   }
 
