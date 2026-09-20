@@ -111,44 +111,54 @@ class _PlaylistSheetState extends ConsumerState<_PlaylistSheet> {
           Expanded(
             child: playlist.isEmpty
                 ? Center(child: Text('暂无歌曲', style: TextStyle(color: AppColors.textHint)))
-                : ListView.builder(
+                : ReorderableListView.builder(
+                    physics: const BouncingScrollPhysics(),
                     itemCount: playlist.length,
+                    buildDefaultDragHandles: false,
+                    onReorder: (oldIndex, newIndex) {
+                      if (newIndex > oldIndex) newIndex--;
+                      ref.read(playerServiceProvider).reorderQueue(oldIndex, newIndex);
+                    },
                     itemBuilder: (context, index) {
                       final song = playlist[index];
                       final isCurrent = index == currentIndex;
-                       return ListTile(
-                         leading: Container(
-                           width: 28, height: 28,
-                           decoration: BoxDecoration(
-                             color: isCurrent ? AppColors.primarySoftColor : AppColors.surface,
-                             borderRadius: BorderRadius.circular(8),
-                           ),
-                           child: Center(
-                             child: Text('${index + 1}', style: TextStyle(
-                               color: isCurrent ? AppColors.primary : AppColors.textSecondary,
-                               fontSize: 11, fontWeight: FontWeight.w500)),
-                           ),
-                         ),
-                         title: Text(song.name, style: TextStyle(
-                           color: isCurrent ? AppColors.primary : AppColors.textPrimary,
-                           fontSize: 13, fontWeight: isCurrent ? FontWeight.w500 : FontWeight.normal),
-                           maxLines: 1, overflow: TextOverflow.ellipsis),
-                         subtitle: Text(song.singer, style: TextStyle(
-                           color: AppColors.textHint, fontSize: 11),
-                           maxLines: 1, overflow: TextOverflow.ellipsis),
-                         trailing: IconButton(
-                           icon: Icon(Icons.close_rounded,
-                               color: AppColors.textHint, size: 18),
-                           tooltip: '移除该歌曲',
-                           onPressed: () {
-                             ref.read(playerServiceProvider).removeFromPlaylist(index);
-                           },
-                         ),
-                         onTap: () {
-                           Navigator.pop(context);
-                           ref.read(playerServiceProvider).playIndex(index);
-                         },
-                       );
+                      return ListTile(
+                        key: ValueKey(song.id),
+                        leading: Container(
+                          width: 28, height: 28,
+                          decoration: BoxDecoration(
+                            color: isCurrent ? AppColors.primarySoftColor : AppColors.surface,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: isCurrent
+                              ? Icon(Icons.music_note_rounded,
+                                  color: AppColors.primary, size: 16)
+                              : ReorderableDragStartListener(
+                                  index: index,
+                                  child: Icon(Icons.drag_indicator_rounded,
+                                      color: AppColors.textHint, size: 20),
+                                ),
+                        ),
+                        title: Text(song.name, style: TextStyle(
+                          color: isCurrent ? AppColors.primary : AppColors.textPrimary,
+                          fontSize: 13, fontWeight: isCurrent ? FontWeight.w500 : FontWeight.normal),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: Text(song.singer, style: TextStyle(
+                          color: AppColors.textHint, fontSize: 11),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                        trailing: IconButton(
+                          icon: Icon(Icons.close_rounded,
+                              color: AppColors.textHint, size: 18),
+                          tooltip: '移除该歌曲',
+                          onPressed: () {
+                            ref.read(playerServiceProvider).removeFromPlaylist(index);
+                          },
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          ref.read(playerServiceProvider).playIndex(index);
+                        },
+                      );
                     },
                   ),
           ),

@@ -51,31 +51,7 @@ class PlayerService {
     logDebug('[Quality] 音质偏好: $_preferredQuality');
   }
 
-  /// 设置播放速度（0.5x–2.0x），立即生效并持久化
-  Future<void> setSpeed(double speed) async {
-    final clamped = speed.clamp(0.5, 2.0);
-    try {
-      await _audioPlayer.setSpeed(clamped);
-    } catch (e) {
-      logDebug('[Speed] 设置速度失败: $e');
-    }
-    _speedController.add(clamped);
-    await _storage.saveSpeed(clamped);
-  }
-
-  /// 启动时加载持久化的播放速度
-  Future<void> _loadSpeed() async {
-    final s = await _storage.loadSpeed();
-    if (s > 0) {
-      _speedController.add(s);
-      try {
-        await _audioPlayer.setSpeed(s);
-      } catch (_) {}
-    }
-  }
-
   final BehaviorSubject<List<MusicInfo>> _playlistController = BehaviorSubject<List<MusicInfo>>.seeded([]);
-  final BehaviorSubject<double> _speedController = BehaviorSubject<double>.seeded(1.0);
   final BehaviorSubject<List<MusicInfo>> _tempPlaylistController = BehaviorSubject<List<MusicInfo>>.seeded([]);
   final BehaviorSubject<List<MusicInfo>> _playedListController = BehaviorSubject<List<MusicInfo>>.seeded([]);
   final BehaviorSubject<int> _currentIndexController = BehaviorSubject<int>.seeded(-1);
@@ -104,7 +80,6 @@ class PlayerService {
   Stream<Duration?> get durationStream => _durationController.stream;
   Stream<PlayMode> get playModeStream => _playModeController.stream;
   Stream<List<MusicInfo>> get playHistoryStream => _playHistoryController.stream;
-  Stream<double> get speedStream => _speedController.stream;
   Stream<String> get statusTextStream => _statusTextController.stream;
   Stream<bool> get isLoadingStream => _isLoadingController.stream;
   Stream<bool> get isSleepTimerActiveStream => _isSleepTimerActiveController.stream;
@@ -119,7 +94,6 @@ class PlayerService {
   bool get isPlaying => _isPlayingController.value;
   PlayMode get playMode => _playModeController.value;
   List<MusicInfo> get playHistory => _playHistoryController.value;
-  double get speed => _speedController.value;
 
   Timer? _retryTimer;
   Timer? _loadTimeoutTimer;
@@ -220,7 +194,6 @@ class PlayerService {
     _loadPlayMode();
     _loadPlayedList();
     _loadPlaylist();
-    _loadSpeed();
   }
 
   // ==================== 播放队列持久化 ====================
@@ -1451,6 +1424,29 @@ class PlayerService {
       _currentIndexController.add(list.isEmpty ? -1 : index.clamp(0, list.length - 1));
     }
     _logRemoved(removed);
+  }
+
+  /// 拖拽排序：把队列中 [oldIndex] 位置的歌曲移到 [newIndex]
+  /// 不影响当前播放的歌曲，仅调整待播放顺序
+  Future<void> reorderQueue(int oldIndex, int newIndex) async {
+    final list = List<MusicInfo>.from(_playlistController.value);
+    if (oldIndex < 0 || oldIndex >= list.length) return;
+    final item = list.removeAt(oldIndex);
+    list.insert(newIndex.clamp(0, list.length), item);
+    _playlistController.add(list);
+
+    // 当前索引跟随移动项调整
+    final cur = _currentIndexController.value;
+    int newCur = cur;
+    if (oldIndex == cur) {
+      newCur = newIndex;
+    } else if (oldIndex < cur && newIndex >= cur) {
+      newCur = cur - 1;
+    } else if (oldIndex > cur && newIndex <= cur) {
+      newCur = cur + 1;
+    }
+    if (newCur != cur) _currentIndexController.add(newCur);
+    logDebug('[Queue] 重排: index $oldIndex -> $newIndex');
   }
 
   void _logRemoved(MusicInfo m) {
