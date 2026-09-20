@@ -1411,12 +1411,21 @@ class _HomeProgressBarState extends ConsumerState<_HomeProgressBar> {
 
     return Row(
       children: [
-        Text(isScrubbing ? _fmt(Duration(milliseconds: activeMs.round())) : _fmt(pos),
-          style: TextStyle(
-            color: isScrubbing ? AppColors.primary : AppColors.textHint,
-            fontSize: fontSize,
-            fontWeight: isScrubbing ? FontWeight.w600 : FontWeight.normal,
-          )),
+        // 左时间标签：长按快退 10s
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onLongPress: () {
+            var target = pos - const Duration(seconds: 10);
+            if (target < Duration.zero) target = Duration.zero;
+            ref.read(playerServiceProvider).seek(target);
+          },
+          child: Text(isScrubbing ? _fmt(Duration(milliseconds: activeMs.round())) : _fmt(pos),
+            style: TextStyle(
+              color: isScrubbing ? AppColors.primary : AppColors.textHint,
+              fontSize: fontSize,
+              fontWeight: isScrubbing ? FontWeight.w600 : FontWeight.normal,
+            )),
+        ),
         Expanded(
           child: CustomSliderProgress(
             activeMs: activeMs,
@@ -1434,8 +1443,16 @@ class _HomeProgressBarState extends ConsumerState<_HomeProgressBar> {
             },
           ),
         ),
-        Text(dur != null ? '-${_fmt(dur - (isScrubbing ? Duration(milliseconds: activeMs.round()) : pos))}' : '-:--',
-          style: TextStyle(color: AppColors.textHint, fontSize: fontSize)),
+        // 右时间标签：长按快进 10s
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onLongPress: () {
+            if (dur == null) return;
+            ref.read(playerServiceProvider).seek(pos + const Duration(seconds: 10));
+          },
+          child: Text(dur != null ? '-${_fmt(dur - (isScrubbing ? Duration(milliseconds: activeMs.round()) : pos))}' : '-:--',
+            style: TextStyle(color: AppColors.textHint, fontSize: fontSize)),
+        ),
       ],
     );
   }
