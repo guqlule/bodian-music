@@ -1385,6 +1385,9 @@ class _HomeProgressBar extends ConsumerStatefulWidget {
 
 class _HomeProgressBarState extends ConsumerState<_HomeProgressBar> {
   // 仅用 ref.watch 触发重建，移除冗余的 ref.listen + setState
+  // 拖动进度条时记录用户预览位置：拖动中显示预览值，松手才真正 seek，避免拖动时频繁 seek
+  double? _scrubPos;
+
   String _fmt(Duration d) {
     final m = d.inMinutes.remainder(60);
     final s = d.inSeconds.remainder(60);
@@ -1394,38 +1397,143 @@ class _HomeProgressBarState extends ConsumerState<_HomeProgressBar> {
   @override
   Widget build(BuildContext context) {
     final pos = ref.watch(positionProvider).valueOrNull ?? Duration.zero;
+    final buffered = ref.watch(bufferedProvider).valueOrNull ?? Duration.zero;
     final dur = ref.watch(durationProvider).valueOrNull;
 
     final maxMs = (dur?.inMilliseconds ?? 0).toDouble().clamp(1.0, double.infinity);
-    final posMs = pos.inMilliseconds.toDouble().clamp(0.0, maxMs);
+    // 拖动中显示预览位置，否则显示真实播放位置
+    final isScrubbing = _scrubPos != null;
+    final activeMs = isScrubbing ? _scrubPos!.clamp(0.0, maxMs) : pos.inMilliseconds.toDouble().clamp(0.0, maxMs);
+    final bufferedMs = buffered.inMilliseconds.toDouble().clamp(0.0, maxMs);
     final thumbR = widget.compact ? 6.0 : 5.0;
     final trackH = widget.compact ? 3.0 : 2.5;
     final fontSize = widget.compact ? 10.0 : 10.0;
 
     return Row(
       children: [
-        Text(_fmt(pos), style: TextStyle(color: AppColors.textHint, fontSize: fontSize)),
+        Text(isScrubbing ? _fmt(Duration(milliseconds: activeMs.round())) : _fmt(pos),
+          style: TextStyle(
+            color: isScrubbing ? AppColors.primary : AppColors.textHint,
+            fontSize: fontSize,
+            fontWeight: isScrubbing ? FontWeight.w600 : FontWeight.normal,
+          )),
         Expanded(
-          child: SliderTheme(
-            data: SliderThemeData(
-              activeTrackColor: AppColors.primary,
-              inactiveTrackColor: AppColors.divider,
-              thumbColor: AppColors.card,
-              thumbShape: RoundSliderThumbShape(enabledThumbRadius: thumbR, elevation: 2),
-              trackHeight: trackH,
-              overlayColor: AppColors.primarySoftColor,
-            ),
-            child: Slider(
-              value: posMs,
-              max: maxMs,
-              onChanged: (v) => ref.read(playerServiceProvider).seek(Duration(milliseconds: v.toInt())),
-            ),
+          child: CustomSliderProgress(
+            activeMs: activeMs,
+            bufferedMs: bufferedMs,
+            maxMs: maxMs,
+            trackH: trackH,
+            thumbR: thumbR,
+            onChanged: (v) {
+              _scrubPos = v;
+              setState(() {});
+            },
+            onRelease: (v) {
+              _scrubPos = null;
+              ref.read(playerServiceProvider).seek(Duration(milliseconds: v.toInt()));
+            },
           ),
         ),
-        Text(dur != null ? '-${_fmt(dur - pos)}' : '-:--',
+        Text(dur != null ? '-${_fmt(dur - (isScrubbing ? Duration(milliseconds: activeMs.round()) : pos))}' : '-:--',
           style: TextStyle(color: AppColors.textHint, fontSize: fontSize)),
       ],
     );
   }
+}
+
+/// 带缓冲进度的自定义滑条：
+/// 底层灰色（inactive）→ 中层浅色（buffered 已缓冲）→ 顶层主色（active 已播放）。
+/// 拖动时 [onChanged] 实时回调（更新预览值），松手 [onRelease] 才真正 seek。
+class CustomSliderProgress extends StatelessWidget {
+  final double activeMs;
+  final double bufferedMs;
+  final double maxMs;
+  final double trackH;
+  final double thumbR;
+  final ValueChanged<double> onChanged;
+  final ValueChanged<double> onRelease;
+
+  const CustomSliderProgress({
+    required this.activeMs,
+    required this.bufferedMs,
+    required this.maxMs,
+    required this.trackH,
+    required this.thumbR,
+    required this.onChanged,
+    required this.onRelease,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // 三层视觉：底层 track（灰）→ 中层 buffered（浅主色）→ 顶层 Slider（active 已播放 + thumb）
+    // Slider 的 active 段颜色与底层 track 一致（被覆盖在 buffered 上方），
+    // 所以只需再叠一条 buffered 浅色段在 active 与 track 之间。
+    final activeRatio = maxMs > 0 ? activeMs / maxMs : 0.0;
+    final bufferedRatio = maxMs > 0 ? bufferedMs.clamp(0.0, maxMs) / maxMs : 0.0;
+
+    return Stack(
+      children: [
+        // 中层：已缓冲段（浅主色），从 active 末端画到 buffered 末端
+        CustomPaint(
+          size: Size.fromHeight(40),
+          painter: _BufferedBarPainter(
+            activeRatio: activeRatio,
+            bufferedRatio: bufferedRatio,
+            trackH: trackH,
+            color: AppColors.primary.withValues(alpha: 0.28),
+          ),
+        ),
+        // 顶层：Slider（active 段 + 拖动 thumb + 交互）
+        SliderTheme(
+          data: SliderThemeData(
+            activeTrackColor: AppColors.primary,
+            inactiveTrackColor: AppColors.divider,
+            thumbColor: AppColors.card,
+            thumbShape: RoundSliderThumbShape(enabledThumbRadius: thumbR, elevation: 2),
+            trackHeight: trackH,
+            overlayColor: AppColors.primarySoftColor,
+          ),
+          child: Slider(
+            value: activeMs,
+            max: maxMs,
+            onChanged: onChanged,
+            onChangeEnd: onRelease,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 在底层 track 之上、Slider 之下，画一条"已缓冲"浅色进度段。
+/// 只画 active 末端到 buffered 末端之间的增量（active 本身由 Slider 画）。
+class _BufferedBarPainter extends CustomPainter {
+  final double activeRatio;
+  final double bufferedRatio;
+  final double trackH;
+  final Color color;
+
+  _BufferedBarPainter({
+    required this.activeRatio,
+    required this.bufferedRatio,
+    required this.trackH,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (bufferedRatio <= activeRatio) return; // 没有增量缓冲可画
+    final h = size.height;
+    final center = h / 2;
+    final start = size.width * activeRatio;
+    final end = size.width * bufferedRatio;
+    final rect = Rect.fromLTRB(start, center - trackH / 2, end, center + trackH / 2);
+    final paint = Paint()..color = color;
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, Radius.circular(trackH / 2)), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _BufferedBarPainter old) =>
+      old.activeRatio != activeRatio || old.bufferedRatio != bufferedRatio || old.color != color;
 }
 

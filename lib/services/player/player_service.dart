@@ -82,6 +82,7 @@ class PlayerService {
   final BehaviorSubject<MusicInfo?> _currentMusicController = BehaviorSubject<MusicInfo?>.seeded(null);
   final BehaviorSubject<bool> _isPlayingController = BehaviorSubject<bool>.seeded(false);
   final BehaviorSubject<Duration> _positionController = BehaviorSubject<Duration>.seeded(Duration.zero);
+  final BehaviorSubject<Duration> _bufferedController = BehaviorSubject<Duration>.seeded(Duration.zero);
   final BehaviorSubject<Duration?> _durationController = BehaviorSubject<Duration?>.seeded(null);
   final BehaviorSubject<PlayMode> _playModeController = BehaviorSubject<PlayMode>.seeded(PlayMode.listLoop);
   final BehaviorSubject<List<MusicInfo>> _playHistoryController = BehaviorSubject<List<MusicInfo>>.seeded([]);
@@ -99,6 +100,7 @@ class PlayerService {
   Stream<bool> get isPlayingStream => _isPlayingController.stream;
   Stream<String> get qualityStream => _qualityController.stream;
   Stream<Duration> get positionStream => _positionController.stream;
+  Stream<Duration> get bufferedStream => _bufferedController.stream;
   Stream<Duration?> get durationStream => _durationController.stream;
   Stream<PlayMode> get playModeStream => _playModeController.stream;
   Stream<List<MusicInfo>> get playHistoryStream => _playHistoryController.stream;
@@ -179,6 +181,11 @@ class PlayerService {
       if (duration != null && duration.inMilliseconds > 0) {
         _applyDurationUpdate(duration);
       }
+    }));
+
+    // 缓冲进度：PlaybackEvent.bufferedPosition 供进度条显示"已缓冲到哪"
+    _subscriptions.add(_audioPlayer.playbackEventStream.listen((event) {
+      _bufferedController.add(event.bufferedPosition);
     }));
 
     _subscriptions.add(_audioPlayer.playerStateStream.listen((state) {

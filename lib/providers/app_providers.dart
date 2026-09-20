@@ -26,6 +26,7 @@ final currentMusicProvider = _psStream<MusicInfo?>((p) {
 final playQualityProvider = _psStream<String>((p) => p.qualityStream);
 final isPlayingProvider = _psStream<bool>((p) => p.isPlayingStream);
 final positionProvider = _psStream<Duration>((p) => p.positionStream);
+final bufferedProvider = _psStream<Duration>((p) => p.bufferedStream);
 final durationProvider = _psStream<Duration?>((p) => p.durationStream);
 final currentIndexProvider = _psStream<int>((p) => p.currentIndexStream);
 final playModeProvider = _psStream<PlayMode>((p) => p.playModeStream);
