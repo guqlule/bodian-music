@@ -1171,28 +1171,70 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
                 _showPlaylist();
               },
             ),
-            ListTile(
-              leading: Container(width: 36, height: 36, decoration: BoxDecoration(
-                color: AppColors.surface, borderRadius: BorderRadius.circular(10)),
-                child: Icon(Icons.download_rounded, color: AppColors.textSecondary, size: 18)),
-              title: Text('下载',
-                style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
-              subtitle: Text('保存到本地，离线播放',
-                style: TextStyle(color: AppColors.textHint, fontSize: 11)),
-              onTap: () async {
-                final quality = ref.read(settingsProvider).quality;
-                try {
-                  await ref.read(downloadProvider.notifier).download(music, quality: quality);
-                } catch (e) {
-                  logDebug('[Download] 下载失败: $e');
-                }
-                if (!context.mounted) return;
-                Navigator.pop(sheetContext);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('已加入下载队列，可在「下载管理」查看进度')),
+            () {
+              final isDl = ref.watch(downloadProvider).isDownloaded(music.id);
+              if (isDl) {
+                return ListTile(
+                   leading: Container(
+                       width: 36,
+                       height: 36,
+                       decoration: BoxDecoration(
+                           color: AppColors.surface,
+                           borderRadius: BorderRadius.circular(10)),
+                       child: Icon(Icons.check_circle_rounded,
+                           color: AppColors.primary, size: 18)),
+                    title: Text('已下载',
+                        style: TextStyle(
+                            color: AppColors.textPrimary, fontSize: 14)),
+                    subtitle: Text('离线可用',
+                        style: TextStyle(
+                            color: AppColors.textHint, fontSize: 11)),
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    ref
+                        .read(downloadProvider.notifier)
+                        .deleteDownloaded(music);
+                    ScaffoldMessenger.of(context)
+                        .showSnackBar(SnackBar(
+                            content: Text('已删除本地「${music.name}」')));
+                  },
                 );
-              },
-            ),
+              } else {
+                return ListTile(
+                  leading: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(10)),
+                       child: Icon(Icons.download_rounded,
+                           color: AppColors.textSecondary, size: 18)),
+                    title: Text('下载',
+                        style: TextStyle(
+                            color: AppColors.textPrimary, fontSize: 14)),
+                    subtitle: Text('保存到本地，离线播放',
+                        style: TextStyle(
+                            color: AppColors.textHint, fontSize: 11)),
+                  onTap: () async {
+                    final quality = ref.read(settingsProvider).quality;
+                    try {
+                      await ref
+                          .read(downloadProvider.notifier)
+                          .download(music, quality: quality);
+                    } catch (e) {
+                      logDebug('[Download] 下载失败: $e');
+                    }
+                    if (!context.mounted) return;
+                    Navigator.pop(sheetContext);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text(
+                              '已加入下载队列，可在「下载管理」查看进度')),
+                    );
+                  },
+                );
+              }
+            }(),
             const SizedBox(height: 8),
           ],
         ),

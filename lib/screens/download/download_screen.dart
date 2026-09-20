@@ -77,18 +77,93 @@ class _DownloadScreenState extends ConsumerState<DownloadScreen>
       ]),
     );
 
-    final downloadingTasks = state.queue.where(
-      (task) => task.status == DownloadStatus.downloading || task.status == DownloadStatus.pending,
+    final activeTasks = state.queue.where(
+      (task) =>
+          task.status == DownloadStatus.downloading ||
+          task.status == DownloadStatus.pending,
     ).toList();
+    final failedTasks = state.queue
+        .where((task) => task.status == DownloadStatus.failed)
+        .toList();
 
-    if (downloadingTasks.isEmpty) {
-      return Center(child: Text('没有正在下载的任务', style: TextStyle(color: AppColors.textHint)));
+    if (activeTasks.isEmpty && failedTasks.isEmpty) {
+      return Center(
+          child:
+              Text('没有正在下载或失败的任务',
+                  style: TextStyle(color: AppColors.textHint)));
     }
 
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      itemCount: downloadingTasks.length,
-      itemBuilder: (context, index) => _buildDownloadingItem(downloadingTasks[index]),
+      itemCount: activeTasks.length + failedTasks.length,
+      itemBuilder: (context, index) {
+        if (index < activeTasks.length) {
+          return _buildDownloadingItem(activeTasks[index]);
+        }
+        return _buildFailedItem(failedTasks[index - activeTasks.length]);
+      },
+    );
+  }
+
+  Widget _buildFailedItem(DownloadTask task) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: AppNeumorphic.flat),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: AppColors.error.withOpacity(0.15)),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: task.music.imgUrl != null
+                  ? Image.network(task.music.imgUrl!,
+                      cacheWidth: 96,
+                      fit: BoxFit.cover,
+                      errorBuilder: (
+                          _, __, ___) =>
+                          _defaultThumb())
+                  : _defaultThumb(),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    task.music.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500)),
+                const SizedBox(height: 4),
+                Text(task.error ?? '下载失败',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: AppColors.error, fontSize: 11)),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: () =>
+                ref.read(downloadProvider.notifier).retry(task.music.id),
+            child: Text('重试',
+                style:
+                    TextStyle(color: AppColors.primary, fontSize: 12)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -127,7 +202,9 @@ class _DownloadScreenState extends ConsumerState<DownloadScreen>
                 minHeight: 4,
               ),
               const SizedBox(height: 4),
-              Text('${task.progress}%', style: TextStyle(color: AppColors.textHint, fontSize: 11)),
+              Text('${task.quality} · ${task.progress}%',
+                  style: TextStyle(
+                      color: AppColors.textHint, fontSize: 11)),
             ],
           )),
           IconButton(

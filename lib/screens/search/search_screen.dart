@@ -679,13 +679,18 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
         trailing: PopupMenuButton(
           icon: Icon(Icons.more_vert_rounded, color: AppColors.textHint, size: 20),
-          itemBuilder: (context) => [
-            const PopupMenuItem(value: 'play', child: Text('播放')),
-            const PopupMenuItem(value: 'next', child: Text('下一首播放')),
-            const PopupMenuItem(value: 'add_to_playlist', child: Text('添加到歌单')),
-            const PopupMenuItem(value: 'download', child: Text('下载')),
-            const PopupMenuItem(value: 'favorite', child: Text('我喜欢')),
-          ],
+          itemBuilder: (context) {
+            final isDl = ref.read(downloadProvider).isDownloaded(music.id);
+            return [
+              const PopupMenuItem(value: 'play', child: Text('播放')),
+              const PopupMenuItem(value: 'next', child: Text('下一首播放')),
+              const PopupMenuItem(value: 'add_to_playlist', child: Text('添加到歌单')),
+              PopupMenuItem(
+                  value: 'download',
+                  child: Text(isDl ? '已下载 · 删除' : '下载')),
+              const PopupMenuItem(value: 'favorite', child: Text('我喜欢')),
+            ];
+          },
           onSelected: (value) => _handleMenuAction(value, music),
         ),
         onTap: () => _playMusic(music),
@@ -726,9 +731,19 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Future<void> _handleDownload(MusicInfo music) async {
     final messenger = ScaffoldMessenger.of(context);
+    // 已下载则直接删除（切换为删除语义）
+    final isDl = ref.read(downloadProvider).isDownloaded(music.id);
+    if (isDl) {
+      ref.read(downloadProvider.notifier).deleteDownloaded(music);
+      messenger.showSnackBar(
+          SnackBar(content: Text('已删除本地「${music.name}」')));
+      return;
+    }
     final quality = ref.read(settingsProvider).quality;
     try {
-      await ref.read(downloadProvider.notifier).download(music, quality: quality);
+      await ref
+          .read(downloadProvider.notifier)
+          .download(music, quality: quality);
       messenger.showSnackBar(const SnackBar(
         content: Text('已加入下载队列，可在「下载管理」查看进度'),
       ));

@@ -25,6 +25,17 @@ class DownloadService {
   // 进度写盘节流
   Timer? _progressSaveTimer;
 
+  // 实时进度广播流 —— 供 UI 层（DownloadNotifier）监听，无需反复读 SharedPreferences
+  final StreamController<DownloadTask> _taskStreamController =
+      StreamController<DownloadTask>.broadcast();
+  Stream<DownloadTask> get taskStream => _taskStreamController.stream;
+
+  void _emitTask(DownloadTask task) {
+    if (!_taskStreamController.isClosed) {
+      _taskStreamController.add(task);
+    }
+  }
+
   Future<String> get _localPath async {
     final directory = await getApplicationDocumentsDirectory();
     final downloadDir = Directory('${directory.path}/$_downloadPath');
@@ -108,18 +119,44 @@ class DownloadService {
     try {
       while (true) {
         final queue = await getDownloadQueue();
+        // 卡死任务恢复：上次进程被杀时 status=downloading 的任务重置为 pending
+        var recovered = false;
+        for (final t in queue) {
+          if (t.status == DownloadStatus.downloading) {
+            t.status = DownloadStatus.pending;
+            t.progress = 0;
+            t.error = null;
+            recovered = true;
+          }
+        }
+        if (recovered) {
+          await _saveDownloadQueue(queue);
+        }
+
         final pendingTasks =
             queue.where((task) => task.status == DownloadStatus.pending).toList();
         if (pendingTasks.isEmpty) break;
 
         final currentTask = pendingTasks.first;
         currentTask.status = DownloadStatus.downloading;
+        currentTask.progress = 0;
         await _saveDownloadQueue(queue);
+        _emitTask(currentTask);
 
         try {
           final downloadDir = await _localPath;
-          final fileName = '${currentTask.music.id}_${currentTask.quality}.mp3';
+          final ext = currentTask.quality == 'flac' ||
+                  currentTask.quality == 'flac24bit'
+              ? 'flac'
+              : 'mp3';
+          final fileName =
+              '${currentTask.music.id}_${currentTask.quality}.$ext';
           final filePath = '$downloadDir/$fileName';
+          // 清理上次失败/取消残留的部分文件
+          final partialFile = File(filePath);
+          if (await partialFile.exists()) {
+            await partialFile.delete();
+          }
 
           final cancelToken = CancelToken();
           _cancelTokens[currentTask.music.id] = cancelToken;
@@ -132,6 +169,7 @@ class DownloadService {
               if (total != -1) {
                 currentTask.progress = (received / total * 100).toInt();
                 _scheduleQueueSave(queue);
+                _emitTask(currentTask);
               }
             },
           );
@@ -141,6 +179,7 @@ class DownloadService {
           currentTask.filePath = filePath;
           currentTask.progress = 100;
           await _saveDownloadQueue(queue);
+          _emitTask(currentTask);
 
           final downloadedSongs = await getDownloadedSongs();
           final updatedMusic = currentTask.music.copyWith(songUrl: filePath);
@@ -150,6 +189,17 @@ class DownloadService {
           // 成功后 while 循环继续处理下一个 pending
         } catch (e) {
           _cancelTokens.remove(currentTask.music.id);
+          // 清理失败/取消残留的部分文件
+          final downloadDir2 = await _localPath;
+          final ext2 = currentTask.quality == 'flac' ||
+                  currentTask.quality == 'flac24bit'
+              ? 'flac'
+              : 'mp3';
+          final partialFile2 =
+              File('$downloadDir2/${currentTask.music.id}_${currentTask.quality}.$ext2');
+          if (await partialFile2.exists()) {
+            await partialFile2.delete();
+          }
           // 用户主动取消的任务已从队列移除，这里只处理真正失败的任务
           final stillExists = (await getDownloadQueue())
               .any((t) => t.music.id == currentTask.music.id);
@@ -157,6 +207,7 @@ class DownloadService {
             currentTask.status = DownloadStatus.failed;
             currentTask.error = e.toString();
             await _saveDownloadQueue(queue);
+            _emitTask(currentTask);
           }
           // 失败后继续队列中的下一个任务（修复：失败卡死队列）
         }
@@ -173,6 +224,9 @@ class DownloadService {
       _saveDownloadQueue(List<DownloadTask>.from(queue));
     });
   }
+
+  /// 公开入口：供启动时恢复卡死任务 / 触发队列处理
+  Future<void> processQueue() => _processQueue();
 
   Future<void> retryDownload(String musicId) async {
     final queue = await getDownloadQueue();
