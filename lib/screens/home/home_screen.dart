@@ -935,109 +935,11 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
                 ),
               ),
               ctrlBtn(Icons.skip_next_rounded, () => ref.read(playerServiceProvider).playNext(), size: 46),
-              // 播放速度（非 1.0x 时高亮，点一下打开速度选择）
-              Consumer(builder: (context, ref, _) {
-                final speed = ref.watch(playbackSpeedProvider).valueOrNull ?? 1.0;
-                final active = speed != 1.0;
-                return GestureDetector(
-                  onTap: () => _showSpeedSheet(context),
-                  child: Container(
-                    width: 42, height: 42,
-                    decoration: BoxDecoration(
-                      color: active ? AppColors.primarySoftColor : AppColors.card,
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: active ? null : AppNeumorphic.flat,
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.speed_rounded,
-                          color: active ? AppColors.primary : AppColors.textSecondary, size: 18),
-                        if (active)
-                          Text('${speed.toStringAsFixed(speed == speed.roundToDouble() ? 0 : 1)}x',
-                            style: TextStyle(color: AppColors.primary, fontSize: 8, fontWeight: FontWeight.w600)),
-                      ],
-                    ),
-                  ),
-                );
-              }),
               ctrlBtn(Icons.queue_music_rounded, () => showPlaylistSheet(context), size: 42),
             ],
           ),
         ],
       ),
-    );
-  }
-
-  /// 播放速度选择底部弹窗
-  void _showSpeedSheet(BuildContext context) {
-    const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.card,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('播放速度', style: TextStyle(
-                  color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 16),
-                Flexible(
-                  child: GridView.builder(
-                    shrinkWrap: true,
-                    physics: const BouncingScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 4,
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 1.0,
-                    ),
-                    itemCount: speeds.length,
-                    itemBuilder: (context, index) {
-                      final s = speeds[index];
-                      final current = ref.read(playerServiceProvider).speed;
-                      final selected = s == current;
-                      final label = s == s.roundToDouble() ? s.toStringAsFixed(0) : s.toStringAsFixed(2);
-                      return GestureDetector(
-                        onTap: () {
-                          ref.read(playerServiceProvider).setSpeed(s);
-                          Navigator.pop(sheetContext);
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          decoration: BoxDecoration(
-                            color: selected ? AppColors.primary : AppColors.surface,
-                            borderRadius: BorderRadius.circular(14),
-                            boxShadow: selected
-                                ? [BoxShadow(color: AppColors.primary.withValues(alpha: 0.4), blurRadius: 8, spreadRadius: 2)]
-                                : AppNeumorphic.flat,
-                          ),
-                          child: Center(
-                            child: Text('$label x',
-                              style: TextStyle(
-                                color: selected ? Colors.white : AppColors.textSecondary,
-                                fontSize: 14,
-                                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 
