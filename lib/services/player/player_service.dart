@@ -809,11 +809,17 @@ class PlayerService {
 
     // 先标记 loading（必须在 stop() 之前，防止 idle 误触发自动跳歌）
     _isLoadingController.add(true);
-    try { await _audioPlayer.stop(); } catch (_) {}
+    // 无缝切歌优化：命中 URL 缓存（预取成功）时跳过 stop()，
+    // 直接 setAudioSource 原子替换当前音频源，省去 stop→idle→重新 load 的间隙。
+    // 未命中缓存才 stop 等待取链接，避免旧歌声音叠在新歌上。
+    final hasCachedUrl = _getCachedUrl(music.id) != null;
+    if (!hasCachedUrl) {
+      try { await _audioPlayer.stop(); } catch (_) {}
+    }
     _cancelLoadTimeout();
     _retryTimer?.cancel();
 
-    _statusTextController.add('获取链接中...');
+    _statusTextController.add(hasCachedUrl ? '加载中...' : '获取链接中...');
     _retryCount = 0;
     // 切歌时保留上一首歌词，直到新歌词到达或确认无歌词才清空。
     // 避免切歌瞬间歌词页闪烁成「暂无歌词」。
