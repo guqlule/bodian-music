@@ -806,16 +806,19 @@ class PlayerService {
     _loadRequestId++;
     _lyricRequestId++;
     final requestId = _loadRequestId;
-    
+
     // 先标记 loading（必须在 stop() 之前，防止 idle 误触发自动跳歌）
     _isLoadingController.add(true);
     try { await _audioPlayer.stop(); } catch (_) {}
     _cancelLoadTimeout();
     _retryTimer?.cancel();
-    
+
     _statusTextController.add('获取链接中...');
     _retryCount = 0;
-    _lyricController.add(null);
+    // 切歌时保留上一首歌词，直到新歌词到达或确认无歌词才清空。
+    // 避免切歌瞬间歌词页闪烁成「暂无歌词」。
+    // （旧歌词属于上一首歌曲，新歌开始后位置重新计算，
+    //  若新歌无歌词 _fetchLyric 最终会 add(null)）
     _currentMusicController.add(music);
 
     try {

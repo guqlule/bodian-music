@@ -1465,42 +1465,55 @@ class CustomSliderProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 三层视觉：底层 track（灰）→ 中层 buffered（浅主色）→ 顶层 Slider（active 已播放 + thumb）
-    // Slider 的 active 段颜色与底层 track 一致（被覆盖在 buffered 上方），
-    // 所以只需再叠一条 buffered 浅色段在 active 与 track 之间。
     final activeRatio = maxMs > 0 ? activeMs / maxMs : 0.0;
     final bufferedRatio = maxMs > 0 ? bufferedMs.clamp(0.0, maxMs) / maxMs : 0.0;
 
-    return Stack(
-      children: [
-        // 中层：已缓冲段（浅主色），从 active 末端画到 buffered 末端
-        CustomPaint(
-          size: Size.fromHeight(40),
-          painter: _BufferedBarPainter(
-            activeRatio: activeRatio,
-            bufferedRatio: bufferedRatio,
-            trackH: trackH,
-            color: AppColors.primary.withValues(alpha: 0.28),
-          ),
-        ),
-        // 顶层：Slider（active 段 + 拖动 thumb + 交互）
-        SliderTheme(
-          data: SliderThemeData(
-            activeTrackColor: AppColors.primary,
-            inactiveTrackColor: AppColors.divider,
-            thumbColor: AppColors.card,
-            thumbShape: RoundSliderThumbShape(enabledThumbRadius: thumbR, elevation: 2),
-            trackHeight: trackH,
-            overlayColor: AppColors.primarySoftColor,
-          ),
-          child: Slider(
-            value: activeMs,
-            max: maxMs,
-            onChanged: onChanged,
-            onChangeEnd: onRelease,
-          ),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        return Stack(
+          children: [
+            // 中层：已缓冲段（浅主色），从 active 末端画到 buffered 末端
+            CustomPaint(
+              size: Size.fromHeight(40),
+              painter: _BufferedBarPainter(
+                activeRatio: activeRatio,
+                bufferedRatio: bufferedRatio,
+                trackH: trackH,
+                color: AppColors.primary.withValues(alpha: 0.28),
+              ),
+            ),
+            // 顶层：Slider（active 段 + 拖动 thumb + 交互）
+            SliderTheme(
+              data: SliderThemeData(
+                activeTrackColor: AppColors.primary,
+                inactiveTrackColor: AppColors.divider,
+                thumbColor: AppColors.card,
+                thumbShape: RoundSliderThumbShape(enabledThumbRadius: thumbR, elevation: 2),
+                trackHeight: trackH,
+                overlayColor: AppColors.primarySoftColor,
+              ),
+              child: Slider(
+                value: activeMs,
+                max: maxMs,
+                onChanged: onChanged,
+                onChangeEnd: onRelease,
+              ),
+            ),
+            // 最顶层：双击定位 seek（不拦截拖动手势，onDoubleTapDown/Up 配合 Slider 拖动共存）
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onDoubleTapDown: (details) {
+                  // 双击位置 → 毫秒 → seek
+                  final ratio = (details.localPosition.dx / width).clamp(0.0, 1.0);
+                  onRelease((ratio * maxMs).roundToDouble());
+                },
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
