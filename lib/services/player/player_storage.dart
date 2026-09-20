@@ -9,6 +9,7 @@ class PlayerStorage {
   static const String playedKey = 'played_list';
   static const String playlistKey = 'current_playlist';
   static const String indexKey = 'current_index';
+  static const String speedKey = 'play_speed';
 
   Future<Box> _box() => Hive.openBox('player');
 
@@ -63,6 +64,25 @@ class PlayerStorage {
       await box.put(modeKey, index);
     } catch (e) {
       logDebug('[PlayerStorage] 保存播放模式失败: $e');
+    }
+  }
+
+  Future<double> loadSpeed() async {
+    try {
+      final box = await _box();
+      return box.get(speedKey, defaultValue: 1.0) as double;
+    } catch (e) {
+      logDebug('[PlayerStorage] 加载播放速度失败: $e');
+      return 1.0;
+    }
+  }
+
+  Future<void> saveSpeed(double speed) async {
+    try {
+      final box = await _box();
+      await box.put(speedKey, speed);
+    } catch (e) {
+      logDebug('[PlayerStorage] 保存播放速度失败: $e');
     }
   }
 

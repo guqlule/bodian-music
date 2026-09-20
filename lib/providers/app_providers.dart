@@ -30,6 +30,7 @@ final durationProvider = _psStream<Duration?>((p) => p.durationStream);
 final currentIndexProvider = _psStream<int>((p) => p.currentIndexStream);
 final playModeProvider = _psStream<PlayMode>((p) => p.playModeStream);
 final playHistoryProvider = _psStream<List<MusicInfo>>((p) => p.playHistoryStream);
+final playbackSpeedProvider = _psStream<double>((p) => p.speedStream);
 final playedListProvider = _psStream<List<MusicInfo>>((p) => p.playedListStream);
 final tempPlaylistProvider = _psStream<List<MusicInfo>>((p) => p.tempPlaylistStream);
 final statusTextProvider = _psStream<String>((p) => p.statusTextStream);
