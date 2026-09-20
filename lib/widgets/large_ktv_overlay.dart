@@ -154,12 +154,7 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
 
     final idx = _findIndex(_estPos);
     if (idx < 0 || _lyrics.isEmpty) {
-      return Container(
-        color: Colors.black54,
-        alignment: Alignment.center,
-        child: const Text('暂无歌词',
-            style: TextStyle(color: Colors.white54, fontSize: 18)),
-      );
+      return _buildNoLyricFallback();
     }
 
     final current = _lyrics[idx];
@@ -299,6 +294,58 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
           fontWeight: FontWeight.w900,
         ),
       ),
+    );
+  }
+
+  /// 无歌词时的兜底 UI：专辑封面 + 歌名/歌手 + 提示，比纯黑屏更友好。
+  Widget _buildNoLyricFallback() {
+    final music = ref.read(currentMusicProvider).valueOrNull;
+    final hasArt = music?.imgUrl != null && music!.imgUrl!.isNotEmpty;
+    return Container(
+      color: const Color(0xFF0A0A12),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasArt)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: Image.network(
+                music!.imgUrl!,
+                width: 180,
+                height: 180,
+                fit: BoxFit.cover,
+                cacheWidth: 360,
+                errorBuilder: (_, __, ___) => _musicNotePlaceholder(),
+              ),
+            )
+          else
+            _musicNotePlaceholder(),
+          const SizedBox(height: 24),
+          Text(music?.name ?? '', maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
+          if (music?.singer?.isNotEmpty == true) ...[
+            const SizedBox(height: 6),
+            Text(music!.singer, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Colors.white54, fontSize: 14)),
+          ],
+          const SizedBox(height: 20),
+          const Text('暂无歌词', style: TextStyle(color: Colors.white38, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  Widget _musicNotePlaceholder() {
+    return Container(
+      width: 180,
+      height: 180,
+      decoration: BoxDecoration(
+        color: AppColors.primarySoftColor,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      alignment: Alignment.center,
+      child: Icon(Icons.music_note_rounded, color: AppColors.primary, size: 72),
     );
   }
 }

@@ -160,9 +160,36 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
 
   Widget _buildLyric() {
     if (_currentLine == null) {
-      return const Text(
-        '暂无歌词',
-        style: TextStyle(fontSize: 28, color: Colors.white38),
+      final music = ref.read(currentMusicProvider).valueOrNull;
+      final hasArt = music?.imgUrl != null && music!.imgUrl!.isNotEmpty;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasArt)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Image.network(
+                music!.imgUrl!,
+                width: 140,
+                height: 140,
+                fit: BoxFit.cover,
+                cacheWidth: 280,
+                errorBuilder: (_, __, ___) => _placeholderArt(),
+              ),
+            )
+          else
+            _placeholderArt(),
+          const SizedBox(height: 18),
+          Text(music?.name ?? '', maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
+          if (music?.singer?.isNotEmpty == true) ...[
+            const SizedBox(height: 4),
+            Text(music!.singer, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Colors.white54, fontSize: 13)),
+          ],
+          const SizedBox(height: 14),
+          const Text('暂无歌词', style: TextStyle(fontSize: 14, color: Colors.white38)),
+        ],
       );
     }
 
@@ -196,6 +223,19 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
           ),
         ],
       ],
+    );
+  }
+
+  Widget _placeholderArt() {
+    return Container(
+      width: 140,
+      height: 140,
+      decoration: BoxDecoration(
+        color: AppColors.primarySoftColor,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      alignment: Alignment.center,
+      child: Icon(Icons.music_note_rounded, color: AppColors.primary, size: 56),
     );
   }
 

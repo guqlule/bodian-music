@@ -9,6 +9,8 @@ import 'playlist_sheet.dart';
 import '../../widgets/audio_visualizer.dart';
 import '../../models/music_model.dart';
 import '../../providers/app_providers.dart';
+import '../../providers/download_providers.dart';
+import '../../providers/settings_provider.dart';
 import '../../services/player/player_service.dart';
 import '../../services/api/songlist_service.dart';
 import '../../services/audio/audio_analysis_service.dart';
@@ -1142,6 +1144,28 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
               onTap: () {
                 Navigator.pop(sheetContext);
                 _showPlaylist();
+              },
+            ),
+            ListTile(
+              leading: Container(width: 36, height: 36, decoration: BoxDecoration(
+                color: AppColors.surface, borderRadius: BorderRadius.circular(10)),
+                child: Icon(Icons.download_rounded, color: AppColors.textSecondary, size: 18)),
+              title: Text('下载',
+                style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+              subtitle: Text('保存到本地，离线播放',
+                style: TextStyle(color: AppColors.textHint, fontSize: 11)),
+              onTap: () async {
+                final quality = ref.read(settingsProvider).quality;
+                try {
+                  await ref.read(downloadProvider.notifier).download(music, quality: quality);
+                } catch (e) {
+                  logDebug('[Download] 下载失败: $e');
+                }
+                if (!context.mounted) return;
+                Navigator.pop(sheetContext);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('已加入下载队列，可在「下载管理」查看进度')),
+                );
               },
             ),
             const SizedBox(height: 8),

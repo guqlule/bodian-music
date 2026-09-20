@@ -76,7 +76,7 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
             _bands[i].gain = settings.bandLevels![i];
           }
         });
-        for (int i = 0; i < _bands.length; i++) {
+        for (int i = 0; i < _bands.length && i < settings.bandLevels!.length; i++) {
           await _eqService.setBandLevel(_bands[i].index, settings.bandLevels![i]);
         }
       } else {

@@ -469,11 +469,23 @@ class SettingsScreen extends ConsumerWidget {
                   final code = codeCtrl.text.trim();
                   if (host.isEmpty || code.isEmpty) return;
                   settingsNotifier.setSyncConfig(host, code);
+                  String? err;
                   try {
                     await service.connect(host: host, syncCode: code);
-                  } catch (_) {}
+                  } catch (e) {
+                    err = e.toString();
+                  }
                   if (!context.mounted) return;
                   Navigator.pop(context);
+                  if (err != null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('连接失败：$err')),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('已连接同步服务器')),
+                    );
+                  }
                 },
                 child: Text('保存并连接', style: const TextStyle(color: Colors.blue)),
               ),
