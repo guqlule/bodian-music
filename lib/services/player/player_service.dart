@@ -1429,6 +1429,34 @@ class PlayerService {
     _statusTextController.add('');
   }
 
+  /// 从播放列表移除第 [index] 首歌曲（主列表）
+  /// 不中断播放；若移除的是当前正在播的，保持继续播放当前 song 不切歌
+  Future<void> removeFromPlaylist(int index) async {
+    final list = List<MusicInfo>.from(_playlistController.value);
+    if (index < 0 || index >= list.length) return;
+    final removed = list[index];
+    list.removeAt(index);
+    _playlistController.add(list);
+
+    // 调整当前索引：
+    // - 移除的是当前歌（index == currentIndex）：索引 -1，保留 currentMusic 继续播放
+    // - 移除的是当前歌之前：currentIndex - 1
+    // - 移除的是当前歌之后：currentIndex 不变
+    final cur = _currentIndexController.value;
+    if (index < cur) {
+      _currentIndexController.add(cur - 1);
+    } else if (index == cur) {
+      // 移除当前歌：保持当前音频继续播放，索引不再指向被删项
+      // currentMusic 不变，仅把索引指向新位置（若无则 -1）
+      _currentIndexController.add(list.isEmpty ? -1 : index.clamp(0, list.length - 1));
+    }
+    _logRemoved(removed);
+  }
+
+  void _logRemoved(MusicInfo m) {
+    logDebug('[Queue] 移除歌曲: ${m.name} - ${m.singer}');
+  }
+
   Future<void> playNext({bool isAutoToggle = false}) async {
     final nextMusic = _getNextPlayMusicInfo(isManualToggle: !isAutoToggle);
     

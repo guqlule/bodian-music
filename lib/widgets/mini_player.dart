@@ -147,19 +147,126 @@ class _MiniProgressBar extends ConsumerStatefulWidget {
 }
 
 class _MiniProgressBarState extends ConsumerState<_MiniProgressBar> {
-  // 仅用 ref.watch 触发重建，移除冗余的 ref.listen + setState
+  double? _scrub;
+
   @override
   Widget build(BuildContext context) {
     final pos = ref.watch(positionProvider).valueOrNull ?? Duration.zero;
     final dur = ref.watch(durationProvider).valueOrNull;
-    final value = (dur != null && dur.inMilliseconds > 0)
-        ? (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0)
-        : 0.0;
-    return LinearProgressIndicator(
-      value: value,
-      minHeight: 2,
-      backgroundColor: AppColors.divider,
-      valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+    final buffered = ref.watch(bufferedProvider).valueOrNull ?? Duration.zero;
+
+    final maxMs = (dur?.inMilliseconds ?? 0).clamp(0, 1000000000).toDouble();
+    final scrubbing = _scrub != null;
+    final activeMs = (scrubbing ? _scrub! : pos.inMilliseconds.toDouble()).clamp(0.0, maxMs);
+    final bufferedMs = buffered.inMilliseconds.toDouble().clamp(0.0, maxMs);
+    final activeRatio = maxMs > 0 ? activeMs / maxMs : 0.0;
+    final bufferedRatio = maxMs > 0 ? (bufferedMs / maxMs).clamp(0.0, 1.0) : 0.0;
+
+    if (maxMs <= 0) {
+      return const SizedBox(height: 4);
+    }
+
+    return SizedBox(
+      height: 24,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          // 迷你进度条轨道几何：高度 24，轨道居中。
+          // 用极小 thumb（1.5）让轨道看起来像细进度条，仍可拖动。
+          const trackH = 3.0;
+          const thumbR = 4.0;
+          final inset = thumbR;
+          final trackCenterY = (24.0 - trackH) / 2;
+
+          return Stack(
+            children: [
+              // 缓冲段（浅主色）
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _MiniBufferedPainter(
+                    activeRatio: activeRatio,
+                    bufferedRatio: bufferedRatio,
+                    inset: inset,
+                    trackH: trackH,
+                    trackCenterY: trackCenterY,
+                    color: AppColors.primary.withValues(alpha: 0.25),
+                  ),
+                ),
+              ),
+              // 可拖动 Slider
+              Positioned.fill(
+                child: SliderTheme(
+                  data: SliderThemeData(
+                    activeTrackColor: AppColors.primary,
+                    inactiveTrackColor: AppColors.divider,
+                    thumbColor: AppColors.card,
+                    thumbShape: RoundSliderThumbShape(enabledThumbRadius: thumbR, elevation: 1),
+                    overlayShape: RoundSliderOverlayShape(overlayRadius: thumbR),
+                    trackHeight: trackH,
+                    overlayColor: AppColors.primarySoftColor,
+                  ),
+                  child: Slider(
+                    value: activeMs,
+                    max: maxMs,
+                    onChanged: (v) {
+                      _scrub = v.clamp(0.0, maxMs);
+                      setState(() {});
+                    },
+                    onChangeEnd: (v) {
+                      _scrub = null;
+                      ref.read(playerServiceProvider).seek(Duration(milliseconds: v.toInt()));
+                    },
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
+}
+
+/// 迷你进度条的缓冲段 painter（几何与 Slider 对齐）
+class _MiniBufferedPainter extends CustomPainter {
+  final double activeRatio;
+  final double bufferedRatio;
+  final double inset;
+  final double trackH;
+  final double trackCenterY;
+  final Color color;
+
+  _MiniBufferedPainter({
+    required this.activeRatio,
+    required this.bufferedRatio,
+    required this.inset,
+    required this.trackH,
+    required this.trackCenterY,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (bufferedRatio <= activeRatio) return;
+    final usableW = (size.width - inset * 2).clamp(0.0, size.width);
+    final startX = inset + usableW * activeRatio;
+    final endX = inset + usableW * bufferedRatio;
+    final rect = Rect.fromLTRB(
+      startX,
+      trackCenterY - trackH / 2,
+      endX,
+      trackCenterY + trackH / 2,
+    );
+    final paint = Paint()..color = color;
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, Radius.circular(trackH / 2)), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniBufferedPainter old) =>
+      old.activeRatio != activeRatio ||
+      old.bufferedRatio != bufferedRatio ||
+      old.color != color ||
+      old.inset != inset ||
+      old.trackH != trackH ||
+      old.trackCenterY != trackCenterY;
 }

@@ -1336,7 +1336,8 @@ class _HomeProgressBarState extends ConsumerState<_HomeProgressBar> {
             trackH: trackH,
             thumbR: thumbR,
             onChanged: (v) {
-              _scrubPos = v;
+              // 预览值钳制到 [0, maxMs]，避免拖动越界导致右侧剩余时间变负
+              _scrubPos = v.clamp(0.0, maxMs);
               setState(() {});
             },
             onRelease: (v) {
@@ -1345,14 +1346,22 @@ class _HomeProgressBarState extends ConsumerState<_HomeProgressBar> {
             },
           ),
         ),
-        // 右时间标签：长按快进 10s
+        // 右时间标签：长按快进 10s（不超时长）
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onLongPress: () {
             if (dur == null) return;
-            ref.read(playerServiceProvider).seek(pos + const Duration(seconds: 10));
+            var target = pos + const Duration(seconds: 10);
+            if (target > dur) target = dur;
+            ref.read(playerServiceProvider).seek(target);
           },
-          child: Text(dur != null ? '-${_fmt(dur - (isScrubbing ? Duration(milliseconds: activeMs.round()) : pos))}' : '-:--',
+          child: Text(
+            () {
+              final shown = isScrubbing ? Duration(milliseconds: activeMs.round()) : pos;
+              final remaining = dur != null ? dur - shown : null;
+              if (remaining == null) return '-:--';
+              return '-${_fmt(remaining < Duration.zero ? Duration.zero : remaining)}';
+            }(),
             style: TextStyle(color: AppColors.textHint, fontSize: fontSize)),
         ),
       ],
