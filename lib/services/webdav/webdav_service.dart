@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:dio/dio.dart' show ResponseType;
 import 'package:webdav_client/webdav_client.dart' as webdav;
 import '../../core/utils/logger.dart';
 
@@ -225,6 +225,36 @@ class WebdavService {
       return await _client!.read(filePath);
     } catch (e) {
       throw WebdavException.fromError(e);
+    }
+  }
+
+  /// 只读文件前 maxBytes 字节（HTTP Range），用于提取音频头标签（ID3/FLAC）省带宽。
+  /// 服务端不支持 206 时回退全量 read。
+  Future<List<int>> readFileHead(String filePath, {int maxBytes = 256 * 1024}) async {
+    if (_client == null) throw WebdavException('WebDAV 未连接');
+    try {
+      final dio = _client!.c;
+      final resp = await dio.req<List<int>>(_client!, 'GET', _normalizePath(filePath),
+        optionsHandler: (o) {
+          o.responseType = ResponseType.bytes;
+          o.headers ??= {};
+          o.headers!['Range'] = 'bytes=0-${maxBytes - 1}';
+        },
+      );
+      // 206 表示 partial content，正常；200 表示服务端忽略 Range（返回全量）也能用
+      if (resp.statusCode == 206 || resp.statusCode == 200) {
+        return resp.data ?? [];
+      }
+      // 416 Range Not Satisfiable 等：回退全量
+      logDebug('[WebDAV] Range 读取状态 ${resp.statusCode}，回退全量');
+      return await _client!.read(filePath);
+    } catch (e) {
+      logDebug('[WebDAV] Range 读取失败: $e，回退全量');
+      try {
+        return await _client!.read(filePath);
+      } catch (e2) {
+        throw WebdavException.fromError(e2);
+      }
     }
   }
 }

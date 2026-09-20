@@ -1,4 +1,5 @@
 import 'package:hive/hive.dart';
+import 'package:path_provider/path_provider.dart';
 import 'dart:io' as io;
 import 'dart:math' as math;
 import '../../core/utils/logger.dart';
@@ -213,10 +214,16 @@ class WebdavMusicService {
   /// 第二阶段：并发下载音频文件提取 时长/封面/歌词，回填到 songs。
   /// 成功一个标记一个，避免重复下载；下载失败不中断。
   Future<void> _enrichMetadata(WebdavService webdav, List<MusicInfo> songs, WebdavConfig config) async {
-    final dir = io.Directory(io.Directory.systemTemp.path + '/lx_music_webdav_meta');
+    // 应用缓存目录（持久化、可被「清除缓存」清掉），与封面 artPath 同目录，跨启动保留
+    io.Directory dir;
     try {
+      final cacheDir = await getApplicationCacheDirectory();
+      dir = io.Directory('${cacheDir.path}/lx_music_webdav_meta');
       if (!dir.existsSync()) dir.createSync(recursive: true);
-    } catch (_) {}
+    } catch (_) {
+      dir = io.Directory(io.Directory.systemTemp.path + '/lx_music_webdav_meta');
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+    }
 
     // 找出还没提取过的歌曲（按 songUrl），按下标定位以便回填
     final pendingIdx = <int>[];
@@ -237,8 +244,8 @@ class WebdavMusicService {
       _scanProgress = '提取元数据 ${done}/${pendingIdx.length}...';
       var updated = song;
       try {
-        // 1. 下载文件到临时目录（全文件，保证头信息完整）
-        final bytes = await webdav.readFile(url);
+        // 1. 只读前 256KB（Range），足够提取 ID3/FLAC/ID3v2 标签头，省带宽
+        final bytes = await webdav.readFileHead(url, maxBytes: 256 * 1024);
         final ext = _getExtension(url);
         final tmpFile = io.File('${dir.path}/meta_${url.hashCode}.$ext');
         await tmpFile.writeAsBytes(bytes, flush: false);
