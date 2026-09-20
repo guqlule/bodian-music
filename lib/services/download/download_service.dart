@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/utils/logger.dart';
 import '../../models/music_model.dart';
+import '../local/local_music_service.dart';
 
 class DownloadService {
   final Dio _dio = Dio();
@@ -186,6 +187,9 @@ class DownloadService {
           downloadedSongs.removeWhere((s) => s.id == updatedMusic.id);
           downloadedSongs.add(updatedMusic);
           await _saveDownloadedSongs(downloadedSongs);
+
+          // 即时追加到本地音乐库（无需等待刷新）
+          LocalMusicService().addDownloadedFile(updatedMusic);
           // 成功后 while 循环继续处理下一个 pending
         } catch (e) {
           _cancelTokens.remove(currentTask.music.id);

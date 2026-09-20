@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:hive/hive.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../core/utils/logger.dart';
 import '../../models/music_model.dart';
 import '../lyric/lyric_parser.dart';
@@ -53,9 +54,37 @@ class LocalMusicService {
         }
         _localSongs = loaded;
       }
+
+      // 自动注册下载目录（首次 / 从未登记过）
+      final downloadDir = await _getDownloadDir();
+      if (downloadDir != null && await Directory(downloadDir).exists()
+          && !_folders.contains(downloadDir)) {
+        _folders.add(downloadDir);
+        await _saveLibrary();
+        logDebug('[LocalMusic] 自动注册下载目录: $downloadDir');
+      }
+
       logDebug('[LocalMusic] 恢复 ${_localSongs.length} 首本地歌曲');
     } catch (e) {
       logDebug('[LocalMusic] 恢复失败: $e');
+    }
+  }
+
+  /// 下载完成后即时追加到本地库（由 DownloadService 触发）
+  Future<void> addDownloadedFile(MusicInfo song) async {
+    if (_localSongs.any((s) => s.id == song.id)) return;
+    _localSongs.add(song);
+    await _saveLibrary();
+    logDebug('[LocalMusic] 追加下载歌曲: ${song.name}');
+  }
+
+  Future<String?> _getDownloadDir() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final downloadDir = '${directory.path}/lx_music/downloads';
+      return downloadDir;
+    } catch (_) {
+      return null;
     }
   }
 

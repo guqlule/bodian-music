@@ -820,7 +820,11 @@ class PlayerService {
       _qualityController.add('');
 
       // 本地音乐/WebDAV 直接使用本地路径或 HTTP URL
-      if (music.source == 'local' || music.source == 'webdav') {
+      // 已下载文件（songUrl 是本地绝对路径）同样直接播放，不重新取 URL
+      final isLocalFile = music.source == 'local' || music.source == 'webdav'
+          || (music.songUrl != null &&
+              music.songUrl!.startsWith(io.Platform.pathSeparator));
+      if (isLocalFile) {
         url = music.songUrl;
       } else {
         // 始终并行获取歌词（不依赖URL缓存）
