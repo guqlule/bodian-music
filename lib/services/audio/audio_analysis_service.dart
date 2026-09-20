@@ -49,7 +49,6 @@ class AudioAnalysisService {
   double _lastBass = 0;
   double _beatThreshold = 0.15;
   int _beatCooldown = 0;
-  int _logCounter = 0;
 
   // 诊断字段（供 UI 调试面板读取，无需 adb 即可排查）
   int framesReceived = 0;

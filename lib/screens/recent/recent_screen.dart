@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/music_model.dart';
 import '../../providers/app_providers.dart';
 import '../../core/theme/app_theme.dart';
+import '../../services/player/player_service.dart' show PlayMode;
 
 class RecentScreen extends ConsumerStatefulWidget {
   const RecentScreen({super.key});
@@ -25,22 +26,24 @@ class _RecentScreenState extends ConsumerState<RecentScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          if (recent.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: GestureDetector(
-                onTap: _showClearDialog,
-                child: Container(
-                  width: 36, height: 36,
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(Icons.delete_outline_rounded,
-                      color: AppColors.textSecondary, size: 18),
-                ),
-              ),
+          if (recent.isNotEmpty) ...[
+            IconButton(
+              icon: const Icon(Icons.shuffle_rounded, size: 20),
+              tooltip: '随机播放',
+              onPressed: _shuffle,
             ),
+            IconButton(
+              icon: const Icon(Icons.play_circle_outline_rounded, size: 20),
+              tooltip: '播放全部',
+              onPressed: _playAll,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline_rounded, size: 20),
+              tooltip: '清空',
+              onPressed: _showClearDialog,
+            ),
+            const SizedBox(width: 8),
+          ],
         ],
       ),
       body: recent.isEmpty ? _buildEmpty() : _buildList(recent),
@@ -148,5 +151,20 @@ class _RecentScreenState extends ConsumerState<RecentScreen> {
         ],
       ),
     );
+  }
+
+  void _playAll() async {
+    final recent = ref.read(recentPlayedProvider);
+    if (recent.isEmpty) return;
+    await ref.read(playerServiceProvider).setPlaylist(recent);
+  }
+
+  void _shuffle() async {
+    final recent = ref.read(recentPlayedProvider);
+    if (recent.isEmpty) return;
+    final playerService = ref.read(playerServiceProvider);
+    await playerService.setPlayMode(PlayMode.random);
+    await playerService.setPlaylist(recent);
+    await playerService.playMusic(recent.first);
   }
 }

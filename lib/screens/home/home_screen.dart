@@ -608,10 +608,6 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
               // 定时关闭快捷入口：激活时高亮并显示剩余分钟数
               Consumer(builder: (context, ref, _) {
                 final active = ref.watch(sleepTimerActiveProvider).valueOrNull ?? false;
-                final remaining = ref.watch(sleepTimerRemainingProvider).valueOrNull;
-                final min = active && remaining != null
-                    ? ((remaining.inSeconds + 59) ~/ 60).toString()
-                    : null;
                 return GestureDetector(
                   onTap: () => context.push('/sleep-timer'),
                   child: Container(
@@ -847,11 +843,6 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
       ),
     );
   }
-
-  Widget _coverPlaceholder(double size) => Container(
-        color: AppColors.primarySoftColor,
-        child: Icon(Icons.music_note_rounded, color: AppColors.primary, size: size * 0.4),
-      );
 
   /// 首页播放控制区（紧凑版进度条 + 控制按钮）
   Widget _buildHomeControls(MusicInfo music, bool playing) {
@@ -1215,23 +1206,24 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
                     subtitle: Text('保存到本地，离线播放',
                         style: TextStyle(
                             color: AppColors.textHint, fontSize: 11)),
-                  onTap: () async {
-                    final quality = ref.read(settingsProvider).quality;
-                    try {
-                      await ref
-                          .read(downloadProvider.notifier)
-                          .download(music, quality: quality);
-                    } catch (e) {
-                      logDebug('[Download] 下载失败: $e');
-                    }
-                    if (!context.mounted) return;
-                    Navigator.pop(sheetContext);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text(
-                              '已加入下载队列，可在「下载管理」查看进度')),
-                    );
-                  },
+                   onTap: () async {
+                     final messenger = ScaffoldMessenger.maybeOf(context);
+                     final quality = ref.read(settingsProvider).quality;
+                     try {
+                       await ref
+                           .read(downloadProvider.notifier)
+                           .download(music, quality: quality);
+                     } catch (e) {
+                       logDebug('[Download] 下载失败: $e');
+                     }
+                     if (!sheetContext.mounted) return;
+                     Navigator.pop(sheetContext);
+                     messenger?.showSnackBar(
+                       const SnackBar(
+                           content: Text(
+                               '已加入下载队列，可在「下载管理」查看进度')),
+                     );
+                   },
                 );
               }
             }(),

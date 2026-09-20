@@ -21,7 +21,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   final Future<void> Function() onPlayPrevious;
   MediaItem? _currentItem;
   String _baseMediaId = '';
-  DateTime _lastLyricPush = DateTime(0);
   String? _lastLyricText;
 
   AudioPlayerHandler({
@@ -123,7 +122,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     final text = line ?? '';
     if (text == _lastLyricText) return;
     _lastLyricText = text;
-    _lastLyricPush = DateTime.now();
 
     unawaited(_readBluetoothLyricEnabled().then((enabled) {
       _btLyricCached = enabled;

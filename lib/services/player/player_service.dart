@@ -1592,7 +1592,6 @@ class PlayerService {
 
   /// 同步合并进来的播放历史（去重后整表替换，远端新条目已在调用方置顶合并）
   Future<void> importHistory(List<MusicInfo> merged) async {
-    final cap = merged.length > _maxHistorySize ? merged.length : _maxHistorySize;
     _playHistoryController.add(merged.take(_maxHistorySize).toList());
     await _savePlayHistory();
   }

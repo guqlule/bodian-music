@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/music_model.dart';
 import '../../providers/app_providers.dart';
 import '../../core/theme/app_theme.dart';
+import '../../services/player/player_service.dart' show PlayMode;
 
 class FavoritesScreen extends ConsumerStatefulWidget {
   const FavoritesScreen({super.key});
@@ -25,21 +26,24 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          if (favorites.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: GestureDetector(
-                onTap: _playAll,
-                child: Container(
-                  width: 36, height: 36,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 20),
-                ),
-              ),
+          if (favorites.isNotEmpty) ...[
+            IconButton(
+              icon: const Icon(Icons.shuffle_rounded, size: 20),
+              tooltip: '随机播放',
+              onPressed: _shuffle,
             ),
+            IconButton(
+              icon: const Icon(Icons.play_circle_outline_rounded, size: 20),
+              tooltip: '播放全部',
+              onPressed: _playAll,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline_rounded, size: 20),
+              tooltip: '清空',
+              onPressed: () => _showClearDialog(),
+            ),
+            const SizedBox(width: 8),
+          ],
         ],
       ),
       body: favorites.isEmpty ? _buildEmpty() : _buildList(favorites),
@@ -129,12 +133,8 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
               subtitle: Text(song.singer, maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
               trailing: IconButton(
-                icon: Icon(Icons.favorite_rounded, color: AppColors.error, size: 20),
-                onPressed: () {
-                  ref.read(favoritesProvider.notifier).removeFavorite(song.id);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('已取消喜欢「${song.name}」')));
-                },
+                icon: Icon(Icons.more_vert_rounded, color: AppColors.textHint, size: 20),
+                onPressed: () => _showSongActions(context, song, index),
               ),
               onTap: () {
                 final playerService = ref.read(playerServiceProvider);
@@ -159,5 +159,86 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     final favorites = ref.read(favoritesProvider);
     if (favorites.isEmpty) return;
     await ref.read(playerServiceProvider).setPlaylist(favorites);
+  }
+
+  void _shuffle() async {
+    final favorites = ref.read(favoritesProvider);
+    if (favorites.isEmpty) return;
+    final playerService = ref.read(playerServiceProvider);
+    await playerService.setPlayMode(PlayMode.random);
+    await playerService.setPlaylist(favorites);
+    await playerService.playMusic(favorites.first);
+  }
+
+  void _showClearDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('清空收藏', style: TextStyle(color: AppColors.textPrimary, fontSize: 16)),
+        content: Text('确定要清空我的收藏吗？',
+            style: TextStyle(color: AppColors.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('取消', style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () {
+              ref.read(favoritesProvider.notifier).clearFavorites();
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('收藏已清空')),
+              );
+            },
+            child: Text('清空', style: TextStyle(color: AppColors.error)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSongActions(BuildContext context, MusicInfo song, int index) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(song.name,
+                  style:
+                      TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+            ),
+            ListTile(
+              leading: Icon(Icons.play_arrow_rounded, color: AppColors.primary, size: 20),
+              title: Text('从这首播放', style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                final favorites = ref.read(favoritesProvider);
+                ref.read(playerServiceProvider).setPlaylist(favorites, startIndex: index);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.favorite_rounded, color: AppColors.error, size: 20),
+              title: Text('取消喜欢', style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                ref.read(favoritesProvider.notifier).removeFavorite(song.id);
+                messenger?.showSnackBar(SnackBar(
+                    content: Text('已取消喜欢「${song.name}」')));
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -960,7 +960,10 @@ globalThis.__lx_utils__ = {
 
     _log('并行处理 ${items.length} 个请求');
 
-    // 抢占检查点：高优切歌在等锁时，低优任务让出（异常由调用方捕获）\n    _checkPreempted();\n\n    // 2) 并行发出所有 HTTP 请求（共享连接池，复用 TLS）
+    // 抢占检查点：高优切歌在等锁时，低优任务让出（异常由调用方捕获）
+    _checkPreempted();
+
+    // 2) 并行发出所有 HTTP 请求（共享连接池，复用 TLS）
     final responses = await Future.wait(items.map((item) async {
       try {
         final resp = await _makeHttpRequest(item.data['url']?.toString() ?? '', item.data['options']);
