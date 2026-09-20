@@ -1,4 +1,6 @@
+import 'dart:io' as io;
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:path_provider/path_provider.dart';
 
 class StorageService {
   static const String _settingsBox = 'settings';
@@ -90,6 +92,19 @@ class StorageService {
 
   Future<void> clearCache() async {
     await _cache.clear();
+  }
+
+  /// 清除应用级文件缓存（WebDAV 元数据临时文件 + 封面缓存）
+  Future<void> clearFileCaches() async {
+    try {
+      final cacheDir = await getApplicationCacheDirectory();
+      for (final sub in ['lx_music_webdav_meta', 'album_art']) {
+        final d = io.Directory('${cacheDir.path}/$sub');
+        if (d.existsSync()) {
+          d.deleteSync(recursive: true);
+        }
+      }
+    } catch (_) {}
   }
 
   // Search History

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:async';
 import 'package:go_router/go_router.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/app_providers.dart';
@@ -372,19 +373,35 @@ class SettingsScreen extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('断开同步'),
-        content: const Text('断开后停止双向同步，配置仍保留'),
+        title: const Text('同步'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('当前已连接，选择要执行的操作'),
+            const SizedBox(height: 12),
+            // 立即同步：重新拉取远端歌单/历史并回推本地
+            TextButton.icon(
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('立即同步'),
+              onPressed: () {
+                unawaited(service.requestListPull());
+                if (context.mounted) Navigator.pop(context);
+              },
+            ),
+            TextButton.icon(
+              icon: const Icon(Icons.link_off_rounded, size: 18),
+              label: const Text('断开'),
+              onPressed: () {
+                service.disconnect();
+                if (context.mounted) Navigator.pop(context);
+              },
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              service.disconnect();
-              if (context.mounted) Navigator.pop(context);
-            },
-            child: Text('断开', style: const TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -481,8 +498,9 @@ class SettingsScreen extends ConsumerWidget {
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
-              // 接通真实缓存清理（之前只弹提示）
+              // 清除 Hive 缓存 + 磁盘文件缓存（WebDAV 元数据/封面）
               await StorageService().clearCache();
+              await StorageService().clearFileCaches();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('缓存已清除')),

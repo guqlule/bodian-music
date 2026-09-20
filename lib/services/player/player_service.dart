@@ -597,8 +597,8 @@ class PlayerService {
     // 占位（无时间戳），避免并发重复搜索；完成前 _getAltCandidates 会等待
     _altCandidatesCache[key] = const [];
 
-    // kw 排最后（用户要求）
-    const allSources = ['wy', 'kg', 'mg', 'tx', 'kw'];
+    // kw 排最后（用户要求）；mg 已下线（搜索/建议失效）
+    const allSources = ['wy', 'kg', 'tx', 'kw'];
     final searchSources = allSources
         .where((s) => s != music.source && _urlService.supportsSource(s))
         .toList();
@@ -686,7 +686,7 @@ class PlayerService {
     // 写占位避免并发
     _altCandidatesCache[key] = const [];
 
-    const allSources = ['wy', 'kg', 'mg', 'tx', 'kw'];
+    const allSources = ['wy', 'kg', 'tx', 'kw'];
     final searchSources = allSources
         .where((s) => s != music.source && _urlService.supportsSource(s))
         .toList();
@@ -1187,8 +1187,8 @@ class PlayerService {
 
   Future<void> _tryAlternativeSource(MusicInfo music, int requestId) async {
     try {
-      // kw 排最后（用户要求）
-      const allSources = ['tx', 'wy', 'kg', 'mg', 'git', 'kw'];
+      // kw 排最后（用户要求）；git 为预留自定义源占位，保留
+      const allSources = ['tx', 'wy', 'kg', 'git', 'kw'];
       final supportedSources = allSources
           .where((s) => _urlService.supportsSource(s))
           .toList();
