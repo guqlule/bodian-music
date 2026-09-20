@@ -82,14 +82,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     }
     _suggestDebounce = Timer(const Duration(milliseconds: 500), () async {
       final source = ref.read(musicSearchProvider).source;
-      final results = await _suggestService.getSuggestions(source, text);
+      final serverResults = await _suggestService.getSuggestions(source, text);
       if (!mounted) return;
-      // 防抖期间用户可能已提交搜索或清空输入，响应回来后需再校验
       if (_searchController.text.trim() != text) return;
       if (_searchController.text.trim() == ref.read(musicSearchProvider).query) return;
+      // 历史搜索词优先（精确前缀匹配），去重后合并
+      final lower = text.toLowerCase();
+      final historyMatches =
+          _searchHistory.where((h) => h.toLowerCase().startsWith(lower)).toList();
+      final seen = <String>{};
+      final merged = <String>[];
+      for (final h in historyMatches) {
+        if (seen.add(h)) merged.add(h);
+      }
+      for (final s in serverResults) {
+        if (seen.add(s)) merged.add(s);
+      }
       setState(() {
-        _suggestResults = results;
-        _showSuggest = results.isNotEmpty;
+        _suggestResults = merged.take(20).toList();
+        _showSuggest = _suggestResults.isNotEmpty;
       });
     });
   }

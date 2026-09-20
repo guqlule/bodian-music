@@ -17,6 +17,11 @@ class MusicSearchService {
     'wy': WySearchSource(),
   };
 
+  // 搜索结果短期缓存（TTL 2分钟，减轻重复搜索与源切换压力）
+  final Map<String, SearchResult> _resultCache = {};
+  final Map<String, DateTime> _resultCacheTime = {};
+  static const _resultCacheTtl = Duration(minutes: 2);
+
   /// 搜索源列表 —— 对齐原版 musicSdk/index.js：四源 + 全部
   /// 注：mg（咪咕）suggest/搜索接口已 301 跳转网页版失效，故下线
   static const List<String> availableSources = ['kw', 'kg', 'tx', 'wy', 'all'];
@@ -36,14 +41,40 @@ class MusicSearchService {
     int page = 1,
     int pageSize = 30,
   }) async {
+    // 命中缓存直接返回
+    final cacheKey = '$source|$keyword|$page|$pageSize';
+    final cachedTime = _resultCacheTime[cacheKey];
+    if (cachedTime != null &&
+        DateTime.now().difference(cachedTime) < _resultCacheTtl) {
+      return _resultCache[cacheKey]!;
+    }
+
+    SearchResult result;
     if (source == 'all') {
-      return _searchAll(keyword: keyword, page: page, pageSize: pageSize);
+      result = await _searchAll(keyword: keyword, page: page, pageSize: pageSize);
+    } else {
+      final searchSource = _sources[source];
+      if (searchSource == null) {
+        throw Exception('不支持的音源: $source');
+      }
+      result = await searchSource.search(keyword: keyword, page: page, pageSize: pageSize);
     }
-    final searchSource = _sources[source];
-    if (searchSource == null) {
-      throw Exception('不支持的音源: $source');
+
+    _resultCache[cacheKey] = result;
+    _resultCacheTime[cacheKey] = DateTime.now();
+    // 清理过期缓存条目
+    if (_resultCache.length > 100) {
+      final expired = _resultCacheTime.entries
+          .where((e) => DateTime.now().difference(e.value) >= _resultCacheTtl)
+          .map((e) => e.key)
+          .toList();
+      for (final k in expired) {
+        _resultCache.remove(k);
+        _resultCacheTime.remove(k);
+      }
     }
-    return searchSource.search(keyword: keyword, page: page, pageSize: pageSize);
+
+    return result;
   }
 
   /// 全部源并行搜索（匹配洛雪 "all" 行为）
@@ -68,10 +99,13 @@ class MusicSearchService {
     );
 
     final allList = <MusicInfo>[];
+    final seenIds = <String>{};
     var total = 0;
     var anyHasMore = false;
     for (final r in results) {
-      allList.addAll(r.list);
+      for (final item in r.list) {
+        if (seenIds.add(item.id)) allList.add(item);
+      }
       total += r.total;
       if (r.hasMore) anyHasMore = true;
     }
