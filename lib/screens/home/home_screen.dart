@@ -1387,6 +1387,11 @@ class CustomSliderProgress extends StatelessWidget {
     final activeRatio = maxMs > 0 ? activeMs / maxMs : 0.0;
     final bufferedRatio = maxMs > 0 ? bufferedMs.clamp(0.0, maxMs) / maxMs : 0.0;
 
+    // Slider 的轨道 Y 中心：Flutter Slider 高度 48，轨道在 (48 - trackH)/2 处居中。
+    // 缓冲段必须画在完全相同的 Y 位置，否则两条轨道错位。
+    const sliderHeight = 48.0;
+    final trackCenterY = (sliderHeight - trackH) / 2;
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
@@ -1394,29 +1399,34 @@ class CustomSliderProgress extends StatelessWidget {
           children: [
             // 中层：已缓冲段（浅主色），从 active 末端画到 buffered 末端
             CustomPaint(
-              size: Size.fromHeight(40),
+              size: const Size.fromHeight(sliderHeight),
               painter: _BufferedBarPainter(
                 activeRatio: activeRatio,
                 bufferedRatio: bufferedRatio,
                 trackH: trackH,
+                trackCenterY: trackCenterY,
                 color: AppColors.primary.withValues(alpha: 0.28),
               ),
             ),
             // 顶层：Slider（active 段 + 拖动 thumb + 交互）
-            SliderTheme(
-              data: SliderThemeData(
-                activeTrackColor: AppColors.primary,
-                inactiveTrackColor: AppColors.divider,
-                thumbColor: AppColors.card,
-                thumbShape: RoundSliderThumbShape(enabledThumbRadius: thumbR, elevation: 2),
-                trackHeight: trackH,
-                overlayColor: AppColors.primarySoftColor,
-              ),
-              child: Slider(
-                value: activeMs,
-                max: maxMs,
-                onChanged: onChanged,
-                onChangeEnd: onRelease,
+            SizedBox(
+              height: sliderHeight,
+              width: width,
+              child: SliderTheme(
+                data: SliderThemeData(
+                  activeTrackColor: AppColors.primary,
+                  inactiveTrackColor: AppColors.divider,
+                  thumbColor: AppColors.card,
+                  thumbShape: RoundSliderThumbShape(enabledThumbRadius: thumbR, elevation: 2),
+                  trackHeight: trackH,
+                  overlayColor: AppColors.primarySoftColor,
+                ),
+                child: Slider(
+                  value: activeMs,
+                  max: maxMs,
+                  onChanged: onChanged,
+                  onChangeEnd: onRelease,
+                ),
               ),
             ),
             // 最顶层：双击定位 seek（不拦截拖动手势，onDoubleTapDown/Up 配合 Slider 拖动共存）
@@ -1443,29 +1453,38 @@ class _BufferedBarPainter extends CustomPainter {
   final double activeRatio;
   final double bufferedRatio;
   final double trackH;
+  final double trackCenterY;
   final Color color;
 
   _BufferedBarPainter({
     required this.activeRatio,
     required this.bufferedRatio,
     required this.trackH,
+    required this.trackCenterY,
     required this.color,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     if (bufferedRatio <= activeRatio) return; // 没有增量缓冲可画
-    final h = size.height;
-    final center = h / 2;
     final start = size.width * activeRatio;
     final end = size.width * bufferedRatio;
-    final rect = Rect.fromLTRB(start, center - trackH / 2, end, center + trackH / 2);
+    final rect = Rect.fromLTRB(
+      start,
+      trackCenterY - trackH / 2,
+      end,
+      trackCenterY + trackH / 2,
+    );
     final paint = Paint()..color = color;
     canvas.drawRRect(RRect.fromRectAndRadius(rect, Radius.circular(trackH / 2)), paint);
   }
 
   @override
   bool shouldRepaint(covariant _BufferedBarPainter old) =>
-      old.activeRatio != activeRatio || old.bufferedRatio != bufferedRatio || old.color != color;
+      old.activeRatio != activeRatio ||
+      old.bufferedRatio != bufferedRatio ||
+      old.color != color ||
+      old.trackH != trackH ||
+      old.trackCenterY != trackCenterY;
 }
 
