@@ -819,13 +819,23 @@ class PlayerService {
       // 切歌先清音质徽章，等新档位确定（本地估算 / API 实际）再回填，避免残留上一首
       _qualityController.add('');
 
-      // 本地音乐/WebDAV 直接使用本地路径或 HTTP URL
+      // 本地音乐/WebDAV/已下载文件 直接使用本地路径或 HTTP URL
       // 已下载文件（songUrl 是本地绝对路径）同样直接播放，不重新取 URL
       final isLocalFile = music.source == 'local' || music.source == 'webdav'
           || (music.songUrl != null &&
               music.songUrl!.startsWith(io.Platform.pathSeparator));
       if (isLocalFile) {
         url = music.songUrl;
+        // WebDAV 侧边歌词（扫描时已写入 music.lyric），直接推给歌词控制器
+        if (music.source == 'webdav' &&
+            music.lyric != null &&
+            music.lyric!.isNotEmpty) {
+          _lyricController.add({'lyric': music.lyric});
+        }
+        // 本地歌曲侧边歌词由 _fetchLyric 内部处理
+        if (music.source == 'local') {
+          _fetchLyricParallel(music);
+        }
       } else {
         // 始终并行获取歌词（不依赖URL缓存）
         _fetchLyricParallel(music);

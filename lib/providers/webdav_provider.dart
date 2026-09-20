@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/music_model.dart';
 import '../services/webdav/webdav_service.dart';
@@ -103,6 +104,11 @@ class WebdavConfigNotifier extends StateNotifier<WebdavConfigState> {
   Future<void> clearLibrary() async {
     await _musicService.clearLibrary();
   }
+
+  /// 删除一首歌
+  Future<void> removeSong(String id) async {
+    await _musicService.removeSong(id);
+  }
 }
 
 /// WebDAV 配置 Provider
@@ -111,7 +117,15 @@ final webdavConfigProvider =
   return WebdavConfigNotifier(WebdavService(), WebdavMusicService());
 });
 
-/// WebDAV 歌曲列表 Provider
-final webdavSongsProvider = Provider<List<MusicInfo>>((ref) {
-  return WebdavMusicService().songs;
+/// WebDAV 歌曲列表 Provider（响应式，每次库变更自动推送）
+final webdavSongsProvider = StreamProvider<List<MusicInfo>>((ref) {
+  final controller = StreamController<List<MusicInfo>>();
+  final sub = WebdavMusicService().songsStream.listen(controller.add);
+  // 立即发出当前列表（首次订阅时）
+  controller.add(WebdavMusicService().songs);
+  ref.onDispose(() {
+    sub.cancel();
+    controller.close();
+  });
+  return controller.stream;
 });

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:hive/hive.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io' as io;
@@ -26,6 +27,17 @@ class WebdavMusicService {
   String? _scanProgress;
   int _totalFound = 0;
   int _scannedDirs = 0;
+
+  /// 歌曲列表变更广播流（UI 层监听，无需手动 setState）
+  final StreamController<List<MusicInfo>> _songsStreamController =
+      StreamController<List<MusicInfo>>.broadcast();
+  Stream<List<MusicInfo>> get songsStream => _songsStreamController.stream;
+
+  void _emitSongs() {
+    if (!_songsStreamController.isClosed) {
+      _songsStreamController.add(List.unmodifiable(_songs));
+    }
+  }
 
   List<MusicInfo> get songs => List.unmodifiable(_songs);
   bool get isScanning => _isScanning;
@@ -69,6 +81,7 @@ class WebdavMusicService {
         }
         _songs = loaded;
         _totalFound = loaded.length;
+        _emitSongs();
       }
       logDebug('[WebdavMusic] 恢复 ${_songs.length} 首 WebDAV 歌曲');
     } catch (e) {
@@ -105,6 +118,7 @@ class WebdavMusicService {
 
       _songs = found;
       _totalFound = found.length;
+      _emitSongs();
 
       // 第二阶段：提取元数据（时长/封面/歌词）。下载文件 + MetadataService，
       // 按 songUrl 缓存避免重复下载；并发 3 限制
@@ -313,11 +327,13 @@ class WebdavMusicService {
   Future<void> removeSong(String id) async {
     _songs.removeWhere((s) => s.id == id);
     await _saveLibrary();
+    _emitSongs();
   }
 
   /// 清空库
   Future<void> clearLibrary() async {
     _songs = [];
     await _saveLibrary();
+    _emitSongs();
   }
 }

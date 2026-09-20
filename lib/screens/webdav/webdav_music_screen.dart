@@ -32,7 +32,8 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
   }
 
   List<MusicInfo> get _filteredSongs {
-    var songs = List<MusicInfo>.from(_musicService.songs);
+    final songsAsync = ref.read(webdavSongsProvider);
+    var songs = List<MusicInfo>.from(songsAsync.valueOrNull ?? _musicService.songs);
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
       songs = songs.where((s) =>
@@ -170,6 +171,17 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
                   const PopupMenuItem(value: _SortMode.addTime, child: Text('按添加时间')),
                 ],
               ),
+            IconButton(
+              icon: const Icon(Icons.shuffle_rounded, size: 20),
+              onPressed: songs.isNotEmpty
+                  ? () {
+                      final shuffled = List<MusicInfo>.from(songs)..shuffle();
+                      ref.read(playerServiceProvider).setPlaylist(shuffled);
+                      ref.read(playerServiceProvider).playMusic(shuffled.first);
+                    }
+                  : null,
+              tooltip: '随机播放',
+            ),
             IconButton(
               icon: const Icon(Icons.refresh_rounded, size: 20),
               onPressed: state.isConnected ? _scanRemote : null,
@@ -402,10 +414,195 @@ class _WebdavMusicScreenState extends ConsumerState<WebdavMusicScreen> {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
           ),
-          trailing: Icon(Icons.cloud_rounded, size: 14, color: AppColors.textHint.withValues(alpha: 0.4)),
+          trailing: _multiSelectMode
+              ? null
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.cloud_rounded, size: 14, color: AppColors.textHint.withValues(alpha: 0.4)),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      icon: Icon(Icons.more_vert_rounded, color: AppColors.textHint, size: 18),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () => _showSongActions(song),
+                    ),
+                  ],
+                ),
         );
       },
     );
+  }
+
+  void _showSongActions(MusicInfo song) {
+    final isFav = ref.read(favoritesProvider.notifier).isFavorite(song.id);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              width: 36, height: 4,
+              decoration: BoxDecoration(color: AppColors.textHint, borderRadius: BorderRadius.circular(2)),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(song.name, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 4),
+                  Text([song.singer, song.album].where((s) => s.isNotEmpty).join(' · '),
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: Icon(
+                isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                color: isFav ? AppColors.error : AppColors.primaryDark, size: 20),
+              title: Text(isFav ? '取消喜欢' : '我喜欢',
+                  style: TextStyle(fontSize: 14, color: AppColors.textPrimary)),
+              onTap: () {
+                ref.read(favoritesProvider.notifier).toggleFavorite(song);
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(isFav ? '已取消喜欢' : '已添加到我喜欢')));
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.playlist_add_rounded, color: AppColors.primaryDark, size: 20),
+              title: Text('添加到歌单', style: TextStyle(fontSize: 14, color: AppColors.textPrimary)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showAddToPlaylist(song);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.queue_music_rounded, color: AppColors.primaryDark, size: 20),
+              title: Text('添加到播放队列', style: TextStyle(fontSize: 14, color: AppColors.textPrimary)),
+              onTap: () {
+                Navigator.pop(ctx);
+                ref.read(playerServiceProvider).addToPlaylist(song);
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('已添加到播放队列')));
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.info_outline_rounded, color: AppColors.textSecondary, size: 20),
+              title: Text('歌曲详情', style: TextStyle(fontSize: 14, color: AppColors.textPrimary)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showSongDetail(song);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline_rounded, color: AppColors.error, size: 20),
+              title: Text('从列表移除', style: TextStyle(fontSize: 14, color: AppColors.error)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await ref.read(webdavConfigProvider.notifier).removeSong(song.id);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddToPlaylist(MusicInfo song) {
+    final playlists = ref.read(playlistProvider);
+    if (playlists.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('请先创建歌单')));
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('选择歌单', style: TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+            ),
+            ...playlists.map((p) => ListTile(
+              leading: Icon(Icons.queue_music_rounded, color: AppColors.primaryDark, size: 20),
+              title: Text(p.name, style: TextStyle(fontSize: 14, color: AppColors.textPrimary)),
+              onTap: () {
+                ref.read(playlistProvider.notifier).addToPlaylist(p.id, song);
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('已添加到 ${p.name}')));
+              },
+            )),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSongDetail(MusicInfo song) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('歌曲详情', style: TextStyle(color: AppColors.textPrimary, fontSize: 16)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _detailRow('歌名', song.name),
+            if (song.singer.isNotEmpty) _detailRow('歌手', song.singer),
+            if (song.album.isNotEmpty) _detailRow('专辑', song.album),
+            _detailRow('远程路径', song.songUrl ?? '未知'),
+            if (song.duration > 0)
+              _detailRow('时长', _fmtDuration(song.duration)),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx),
+              child: Text('关闭', style: TextStyle(color: AppColors.primaryDark))),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 11, color: AppColors.textHint)),
+          const SizedBox(height: 2),
+          Text(value, style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+            maxLines: 2, overflow: TextOverflow.ellipsis),
+        ],
+      ),
+    );
+  }
+
+  String _fmtDuration(int ms) {
+    final d = Duration(milliseconds: ms);
+    final m = d.inMinutes;
+    final s = d.inSeconds.remainder(60);
+    return '${m}:${s.toString().padLeft(2, '0')}';
   }
 }
 
