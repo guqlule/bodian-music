@@ -13,6 +13,7 @@ import 'services/api/user_api_service.dart';
 import 'services/player/player_service.dart';
 import 'services/sync/sync_service.dart';
 import 'models/playlist_model.dart';
+import 'models/music_model.dart';
 import 'providers/app_providers.dart';
 import 'providers/settings_provider.dart';
 
@@ -74,10 +75,11 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
   AppLifecycleListener? _lifecycle;
   Timer? _persistFallbackTimer;
   StreamSubscription<List<Map<String, dynamic>>>? _remoteListsSub;
-  /// 标记：本次歌单变化来自远端拉取合并，跳过回推（防 push/pull 死循环）
+  StreamSubscription<List<Map<String, dynamic>>>? _remoteHistorySub;
+  /// 标记：本次歌单/历史变化来自远端拉取合并，跳过回推（防 push/pull 死循环）
   bool _mergingRemote = false;
 
-  /// 歌单/不喜欢列表变化时推送到同步服务器（仅在已连接且开启同步时）
+  /// 歌单/不喜欢/播放历史变化时推送到同步服务器（仅在已连接且开启同步时）
   void _tryPushSync() {
     try {
       if (_mergingRemote) return; // 远端合并触发的变化不回推
@@ -87,7 +89,30 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
       if (!svc.isConnected) return;
       unawaited(svc.syncLists(ref.read(playlistProvider)));
       unawaited(svc.syncDislikeList(ref.read(dislikeListProvider)));
+      unawaited(svc.syncHistory(ref.read(playHistoryProvider).valueOrNull ?? []));
     } catch (_) {}
+  }
+
+  /// 服务器下发远端播放历史 → 合并进本地（按 id 去重，远端新条目置顶保留）
+  void _mergeRemoteHistory(List<Map<String, dynamic>> remote) {
+    if (remote.isEmpty) return;
+    final local = ref.read(playHistoryProvider).valueOrNull ?? [];
+    final localIds = local.map((m) => m.id).toSet();
+    final remoteSongs = <MusicInfo>[];
+    for (final raw in remote) {
+      try {
+        final m = MusicInfo.fromJson(Map<String, dynamic>.from(raw));
+        if (m.id.isNotEmpty && !localIds.contains(m.id)) remoteSongs.add(m);
+      } catch (_) {}
+    }
+    if (remoteSongs.isEmpty) return;
+    _mergingRemote = true;
+    try {
+      final merged = [...remoteSongs, ...local];
+      unawaited(PlayerService.instance.importHistory(merged));
+    } finally {
+      Future.delayed(Duration.zero, () => _mergingRemote = false);
+    }
   }
 
   /// 服务器下发远端歌单 → 合并进本地（远端 id 不存在则新增，updateTime 更新则覆盖）
@@ -158,8 +183,9 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
       } catch (_) {}
     };
     // 歌单/不喜欢的列表变化时，推送到同步服务器（用 ref.listen 在 build 中触发）
-    // 服务器下发远端歌单 → 合并进本地（双向同步的拉取半边）
+    // 服务器下发远端歌单/播放历史 → 合并进本地（双向同步的拉取半边）
     _remoteListsSub = SyncService().remoteListsStream.listen(_mergeRemoteLists);
+    _remoteHistorySub = SyncService().remoteHistoryStream.listen(_mergeRemoteHistory);
     // 首帧后激活自定义源脚本（JS引擎初始化耗时，不阻塞冷启动首屏）+ 同步音质设置
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
@@ -210,6 +236,7 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
     _lifecycle?.dispose();
     _persistFallbackTimer?.cancel();
     _remoteListsSub?.cancel();
+    _remoteHistorySub?.cancel();
     super.dispose();
   }
 
@@ -221,9 +248,10 @@ class _LxMusicAppState extends ConsumerState<LxMusicApp> {
     // MaterialApp 求值 light/dark 主题的顺序不定，会把 isDark 残留为 true）
     AppColors.isDark = settings.isDarkMode;
     // Key 绑定主题模式：切换深浅色时强制整树重建
-      // 歌单 / 不喜欢列表变化时推送到同步服务器
+      // 歌单 / 不喜欢列表 / 播放历史 变化时推送到同步服务器
       ref.listen(playlistProvider, (_, _) => _tryPushSync());
       ref.listen(dislikeListProvider, (_, _) => _tryPushSync());
+      ref.listen(playHistoryProvider, (_, _) => _tryPushSync());
       // （页面用 AppColors 静态色板，不依赖 Theme inherited，不会随 Theme 变化自动重建）
     return MaterialApp.router(
       key: ValueKey('app_theme_${settings.isDarkMode}'),

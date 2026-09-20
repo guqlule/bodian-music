@@ -1,6 +1,9 @@
 import 'package:hive/hive.dart';
+import 'dart:io' as io;
+import 'dart:math' as math;
 import '../../core/utils/logger.dart';
 import '../../models/music_model.dart';
+import '../../services/platform/metadata_service.dart';
 import 'webdav_service.dart';
 
 /// 支持的音频文件扩展名
@@ -28,6 +31,9 @@ class WebdavMusicService {
   String? get scanProgress => _scanProgress;
   int get totalFound => _totalFound;
   int get scannedDirs => _scannedDirs;
+
+  /// 已提取元数据的歌曲 songUrl → 是否成功（避免重复下载）
+  final Set<String> _metaExtracted = {};
 
   Future<Box> get _box => Hive.openBox('webdav_music');
 
@@ -98,6 +104,13 @@ class WebdavMusicService {
 
       _songs = found;
       _totalFound = found.length;
+
+      // 第二阶段：提取元数据（时长/封面/歌词）。下载文件 + MetadataService，
+      // 按 songUrl 缓存避免重复下载；并发 3 限制
+      if (found.isNotEmpty) {
+        await _enrichMetadata(webdav, found, config);
+      }
+
       _scanProgress = null;
       _isScanning = false;
 
@@ -195,6 +208,88 @@ class WebdavMusicService {
     final lastDot = fileName.lastIndexOf('.');
     if (lastDot < 0) return '';
     return fileName.substring(lastDot + 1);
+  }
+
+  /// 第二阶段：并发下载音频文件提取 时长/封面/歌词，回填到 songs。
+  /// 成功一个标记一个，避免重复下载；下载失败不中断。
+  Future<void> _enrichMetadata(WebdavService webdav, List<MusicInfo> songs, WebdavConfig config) async {
+    final dir = io.Directory(io.Directory.systemTemp.path + '/lx_music_webdav_meta');
+    try {
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+    } catch (_) {}
+
+    // 找出还没提取过的歌曲（按 songUrl），按下标定位以便回填
+    final pendingIdx = <int>[];
+    for (var i = 0; i < songs.length; i++) {
+      final url = songs[i].songUrl ?? '';
+      if (url.isNotEmpty && songs[i].duration == 0 && !_metaExtracted.contains(url)) {
+        pendingIdx.add(i);
+      }
+    }
+    if (pendingIdx.isEmpty) return;
+
+    int done = 0;
+    const concurrency = 3;
+
+    Future<void> processOne(int idx) async {
+      final song = songs[idx];
+      final url = song.songUrl!;
+      _scanProgress = '提取元数据 ${done}/${pendingIdx.length}...';
+      var updated = song;
+      try {
+        // 1. 下载文件到临时目录（全文件，保证头信息完整）
+        final bytes = await webdav.readFile(url);
+        final ext = _getExtension(url);
+        final tmpFile = io.File('${dir.path}/meta_${url.hashCode}.$ext');
+        await tmpFile.writeAsBytes(bytes, flush: false);
+
+        // 2. 提取时长/封面/标题（MetadataService 需要本地路径）
+        try {
+          final meta = await MetadataService().extractMetadata(tmpFile.path);
+          if (meta != null) {
+            final dur = meta['duration'] as int?;
+            final art = meta['artPath'] as String?;
+            final t = meta['title'] as String?;
+            final a = meta['artist'] as String?;
+            updated = updated.copyWith(
+              duration: (dur != null && dur > 0) ? dur : updated.duration,
+              imgUrl: (art != null && art.isNotEmpty) ? art : updated.imgUrl,
+              name: (t != null && t.isNotEmpty && updated.name.isEmpty) ? t : updated.name,
+              singer: (a != null && a.isNotEmpty && updated.singer.isEmpty) ? a : updated.singer,
+            );
+          }
+        } catch (_) {}
+
+        // 3. 同目录同名 .lrc 歌词（WebDAV sidecar）
+        try {
+          final baseNoExt = url.substring(0, url.lastIndexOf('.'));
+          for (final lyricExt in ['.lrc', '.txt']) {
+            try {
+              final lyricBytes = await webdav.readFile('$baseNoExt$lyricExt');
+              if (lyricBytes.isNotEmpty) {
+                updated = updated.copyWith(lyric: String.fromCharCodes(lyricBytes));
+                break;
+              }
+            } catch (_) {
+              // 没有这个 sidecar，试下一个
+            }
+          }
+        } catch (_) {}
+
+        _metaExtracted.add(url);
+        songs[idx] = updated; // 回填（final 字段 → 替换实例）
+      } catch (e) {
+        logDebug('[WebdavMusic] 元数据提取失败: $url, $e');
+      } finally {
+        done++;
+      }
+    }
+
+    for (var i = 0; i < pendingIdx.length; i += concurrency) {
+      final slice = pendingIdx.sublist(i, math.min(i + concurrency, pendingIdx.length));
+      await Future.wait(slice.map(processOne));
+    }
+    logDebug('[WebdavMusic] 元数据提取完成：${_metaExtracted.length} 首');
   }
 
   Future<void> _saveLibrary() async {

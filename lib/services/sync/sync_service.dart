@@ -22,12 +22,15 @@ class SyncService {
   final _syncProgressController = StreamController<SyncProgress>.broadcast();
   final _errorController = StreamController<String>.broadcast();
   final _remoteListsController = StreamController<List<Map<String, dynamic>>>.broadcast();
+  final _remoteHistoryController = StreamController<List<Map<String, dynamic>>>.broadcast();
 
   Stream<SyncConnectionState> get connectionStateStream => _connectionStateController.stream;
   Stream<SyncProgress> get syncProgressStream => _syncProgressController.stream;
   Stream<String> get errorStream => _errorController.stream;
   /// 服务器下发的远端歌单列表（用于双向拉取，客户端合并进本地）
   Stream<List<Map<String, dynamic>>> get remoteListsStream => _remoteListsController.stream;
+  /// 服务器下发的远端播放历史（MusicInfo JSON 列表）
+  Stream<List<Map<String, dynamic>>> get remoteHistoryStream => _remoteHistoryController.stream;
 
   bool get isConnected => _isConnected;
 
@@ -116,6 +119,17 @@ class SyncService {
           _remoteListsController.add(lists);
         }
         break;
+      case 'pull_history_result':
+        // 服务器下发远端播放历史：data 是 MusicInfo JSON 列表
+        final rawH = data['data'];
+        if (rawH is List) {
+          final history = rawH
+              .whereType<Map<String, dynamic>>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList();
+          _remoteHistoryController.add(history);
+        }
+        break;
     }
   }
 
@@ -194,12 +208,32 @@ class SyncService {
     }
   }
 
+  /// 推送本地播放历史到服务器（List<MusicInfo> 的 JSON 数组）
+  Future<void> syncHistory(List<dynamic> history) async {
+    if (!_isConnected) return;
+    try {
+      final data = history
+          .map((m) => Map<String, dynamic>.from(m.toJson() as Map<String, dynamic>))
+          .toList();
+      _channel?.sink.add(jsonEncode({
+        'type': 'history_sync_start',
+        'data': data,
+      }));
+    } catch (e) {
+      _errorController.add('History sync failed: $e');
+    }
+  }
+
   /// 向服务器请求下发当前歌单（拉取半边）。服务器回 `pull_lists_result`。
   Future<void> requestListPull() async {
     if (!_isConnected) return;
     try {
       _channel?.sink.add(jsonEncode({
         'type': 'pull_lists_request',
+        'clientId': _clientId,
+      }));
+      _channel?.sink.add(jsonEncode({
+        'type': 'pull_history_request',
         'clientId': _clientId,
       }));
     } catch (e) {
@@ -213,6 +247,7 @@ class SyncService {
     _syncProgressController.close();
     _errorController.close();
     _remoteListsController.close();
+    _remoteHistoryController.close();
   }
 }
 
