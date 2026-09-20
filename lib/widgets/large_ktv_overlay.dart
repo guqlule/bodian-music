@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,7 +27,7 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
   final _TickerListenable _tickerListenable = _TickerListenable();
 
   late final AnimationController _gradientAnim;
-  late final _FlowingGradientPainter _gradientPainter;
+  late final _FireworksBokehPainter _gradientPainter;
 
   @override
   void initState() {
@@ -35,7 +36,11 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
       vsync: this,
       duration: const Duration(seconds: 12),
     )..repeat();
-    _gradientPainter = _FlowingGradientPainter(animation: _gradientAnim);
+    _gradientPainter = _FireworksBokehPainter(
+      repaint: Listenable.merge([_gradientAnim, _tickerListenable]),
+      animation: _gradientAnim,
+      playing: () => _playing,
+    );
     _ticker = Timer.periodic(const Duration(milliseconds: 33), (_) => _onTick());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _readInitial();
@@ -184,7 +189,7 @@ class _LargeKtvLyricOverlayState extends ConsumerState<LargeKtvLyricOverlay>
     // 每 33ms 只有 _LyricsContent 内的 RichText 重绘，
     // 字体/字号/Container 等都不动，setState 不再触发整树 rebuild。
     return AnimatedBuilder(
-      animation: _gradientAnim,
+      animation: Listenable.merge([_gradientAnim, _tickerListenable]),
       builder: (context, _) {
         return CustomPaint(
           painter: _gradientPainter,
@@ -369,77 +374,254 @@ class LerpScanText extends StatelessWidget {
   }
 }
 
-/// 缓慢流动的深色渐变背景 Painter。
-/// 12 秒一个周期，三个色点沿贝塞尔路径缓慢移动，
-/// 营造出沉浸式但不抢歌词的氛围感。
-class _FlowingGradientPainter extends CustomPainter {
+/// 烟花 + 流行（bokeh 流光粒子）混合背景 Painter。
+/// 不依赖频谱，自包含。播放中持续发射烟花 + 漂浮 bokeh；暂停时粒子冻结。
+/// 通过 [notify] 每帧触发重绘（由外部 ticker 驱动）。
+class _FireworksBokehPainter extends CustomPainter {
   final Animation<double> animation;
+  final bool Function() playing;
 
-  _FlowingGradientPainter({required this.animation})
-      : super(repaint: animation);
+  final math.Random _random = math.Random();
+  final List<_FwRocket> _rockets = [];
+  final List<_FwSpark> _sparks = [];
+  final List<_Bokeh> _bokeh = [];
+
+  _FireworksBokehPainter({
+    required Listenable repaint,
+    required this.animation,
+    required this.playing,
+  }) : super(repaint: repaint) {
+    _initBokeh();
+  }
+
+  void _initBokeh() {
+    for (int i = 0; i < 24; i++) {
+      _bokeh.add(_Bokeh(
+        x: _random.nextDouble(),
+        y: _random.nextDouble(),
+        size: 0.02 + _random.nextDouble() * 0.06,
+        vx: (0.0002 + _random.nextDouble() * 0.0004) * (_random.nextBool() ? 1 : -1),
+        vy: -(0.0001 + _random.nextDouble() * 0.0003),
+        hue: 180 + _random.nextDouble() * 120, // 蓝-紫-粉
+        alpha: 0.05 + _random.nextDouble() * 0.12,
+        pulsePhase: _random.nextDouble() * 6.28,
+      ));
+    }
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
-    final t = animation.value; // 0..1
+    final w = size.width;
+    final h = size.height;
+    final isPlaying = playing();
 
-    // 三个色点，用 sin/cos 做圆形轨道运动
-    final p1 = Offset(
-      size.width * (0.2 + 0.15 * _sin(t * 2 * 3.14159)),
-      size.height * (0.3 + 0.2 * _cos(t * 2 * 3.14159)),
-    );
-    final p2 = Offset(
-      size.width * (0.7 + 0.2 * _cos(t * 2 * 3.14159 + 2.0)),
-      size.height * (0.6 + 0.15 * _sin(t * 2 * 3.14159 + 2.0)),
-    );
-    final p3 = Offset(
-      size.width * (0.5 + 0.18 * _sin(t * 2 * 3.14159 + 4.0)),
-      size.height * (0.8 + 0.12 * _cos(t * 2 * 3.14159 + 4.0)),
-    );
-
-    // 基底深色
-    final bgPaint = Paint()..color = const Color(0xFF0D0D0D);
+    // 1. 深色基底
+    final bgPaint = Paint()..color = const Color(0xFF0A0A12);
     canvas.drawRect(Offset.zero & size, bgPaint);
 
-    // 柔和光晕叠加（使用 BlendMode.screen 做加色混合）
-    final glow1 = Paint()
+    // 2. 环境光晕（底部暖光 + 顶部冷光，缓慢脉动）
+    final t = animation.value;
+    final breathe = 0.5 + 0.5 * _sin(t * 6.283);
+    final warmGlow = Paint()
       ..shader = RadialGradient(
-        colors: const [
-          Color(0x30C9A882), // primary 低透明度
+        colors: [
+          Color.fromARGB((20 + (10 * breathe).round()), 200, 120, 60),
           Color(0x00000000),
         ],
-      ).createShader(Rect.fromCircle(center: p1, radius: size.width * 0.5));
-    canvas.drawRect(Offset.zero & size, glow1);
+      ).createShader(Rect.fromCircle(
+        center: Offset(w * 0.5, h * 0.95),
+        radius: h * 0.7,
+      ));
+    canvas.drawRect(Offset.zero & size, warmGlow);
 
-    final glow2 = Paint()
+    final coolGlow = Paint()
       ..shader = RadialGradient(
-        colors: const [
-          Color(0x20A8C4C9), // accent1 低透明度
+        colors: [
+          Color.fromARGB((15 + (8 * breathe).round()), 60, 100, 200),
           Color(0x00000000),
         ],
-      ).createShader(Rect.fromCircle(center: p2, radius: size.width * 0.45));
-    canvas.drawRect(Offset.zero & size, glow2);
+      ).createShader(Rect.fromCircle(
+        center: Offset(w * 0.5, h * 0.1),
+        radius: h * 0.6,
+      ));
+    canvas.drawRect(Offset.zero & size, coolGlow);
 
-    final glow3 = Paint()
-      ..shader = RadialGradient(
-        colors: const [
-          Color(0x18C9A8B8), // accent2 低透明度
-          Color(0x00000000),
-        ],
-      ).createShader(Rect.fromCircle(center: p3, radius: size.width * 0.4));
-    canvas.drawRect(Offset.zero & size, glow3);
+    if (isPlaying) {
+      // 3. 发射烟花（约每 800ms 一枚，最多 5 枚同时）
+      _maybeLaunchRocket(w, h);
+
+      // 4. 更新 & 绘制烟花弹
+      for (int i = _rockets.length - 1; i >= 0; i--) {
+        final r = _rockets[i];
+        r.y += r.vy;
+        r.vy += 0.1;
+        r.x += r.vx;
+        if (r.y <= r.targetY || r.vy >= -1) {
+          _explode(r, w, h);
+          _rockets.removeAt(i);
+        } else {
+          final alpha = r.life;
+          final rocketColor = HSLColor.fromAHSL(alpha, 40, 1.0, 0.75).toColor();
+          final rp = Paint()
+            ..color = rocketColor
+            ..strokeCap = StrokeCap.round;
+          canvas.drawCircle(Offset(r.x, r.y), 2 + alpha * 2, rp);
+          // 拖尾
+          final trail = Paint()
+            ..color = Color.fromARGB((alpha * 80).round(), 255, 200, 100)
+            ..strokeWidth = 1.5
+            ..strokeCap = StrokeCap.round;
+          canvas.drawLine(Offset(r.x, r.y), Offset(r.x, r.y - r.vy * 4), trail);
+        }
+      }
+
+      // 5. 更新 & 绘制爆炸火花
+      for (int i = _sparks.length - 1; i >= 0; i--) {
+        final s = _sparks[i];
+        s.x += s.vx;
+        s.y += s.vy;
+        s.vy += 0.05; // 重力
+        s.vx *= 0.99;
+        s.life -= 0.012 / s.maxLife;
+        if (s.life <= 0) {
+          _sparks.removeAt(i);
+          continue;
+        }
+        final alpha = s.life.clamp(0.0, 1.0);
+        final color = HSLColor.fromAHSL(alpha, s.hue, 0.9, 0.5 + alpha * 0.25).toColor();
+        final radius = s.size * s.life;
+        // 外晕
+        final halo = Paint()..color = color.withValues(alpha: alpha * 0.08);
+        canvas.drawCircle(Offset(s.x, s.y), radius * 3.5, halo);
+        // 内核
+        final core = Paint()..color = color;
+        canvas.drawCircle(Offset(s.x, s.y), radius, core);
+      }
+
+      // 6. 更新 & 绘制 bokeh 流光
+      for (final b in _bokeh) {
+        b.x += b.vx;
+        b.y += b.vy;
+        // 边界回绕
+        if (b.y < -0.1) b.y = 1.1;
+        if (b.x < -0.1) b.x = 1.1;
+        if (b.x > 1.1) b.x = -0.1;
+        final pulse = 0.5 + 0.5 * _sin(t * 4 + b.pulsePhase);
+        final alpha = b.alpha * (0.5 + pulse * 0.5);
+        final bx = b.x * w;
+        final by = b.y * h;
+        final br = b.size * w * (0.8 + pulse * 0.4);
+        final bp = Paint()
+          ..shader = RadialGradient(
+            colors: [
+              HSLColor.fromAHSL(alpha, b.hue, 0.7, 0.6).toColor(),
+              Color(0x00000000),
+            ],
+          ).createShader(Rect.fromCircle(center: Offset(bx, by), radius: br));
+        canvas.drawCircle(Offset(bx, by), br, bp);
+      }
+    } else {
+      // 暂停：只画静止的 bokeh（无烟花）
+      for (final b in _bokeh) {
+        final bx = b.x * w;
+        final by = b.y * h;
+        final br = b.size * w;
+        final bp = Paint()
+          ..shader = RadialGradient(
+            colors: [
+              HSLColor.fromAHSL(b.alpha * 0.5, b.hue, 0.7, 0.6).toColor(),
+              Color(0x00000000),
+            ],
+          ).createShader(Rect.fromCircle(center: Offset(bx, by), radius: br));
+        canvas.drawCircle(Offset(bx, by), br, bp);
+      }
+    }
   }
 
-  /// sin 快速近似（避免引入 math 库）
+  void _maybeLaunchRocket(double w, double h) {
+    if (_rockets.length >= 5) return;
+    // 概率发射（约 0.66 帧发射一次，~40ms 内）
+    if (_random.nextDouble() < 0.08) {
+      final hue = _random.nextDouble() * 360;
+      _rockets.add(_FwRocket(
+        x: w * (0.15 + _random.nextDouble() * 0.7),
+        y: h,
+        targetY: h * (0.1 + _random.nextDouble() * 0.35),
+        vx: (_random.nextDouble() - 0.5) * 1.5,
+        vy: -(7 + _random.nextDouble() * 5),
+        hue: hue,
+      ));
+    }
+  }
+
+  void _explode(_FwRocket r, double w, double h) {
+    final count = 30 + _random.nextInt(20);
+    for (int i = 0; i < count; i++) {
+      final angle = (i / count) * 6.283 + _random.nextDouble() * 0.5;
+      final speed = 1.5 + _random.nextDouble() * 3.5;
+      _sparks.add(_FwSpark(
+        x: r.x,
+        y: r.y,
+        vx: math.cos(angle) * speed,
+        vy: math.sin(angle) * speed,
+        hue: r.hue + _random.nextDouble() * 20 - 10,
+        size: 1.5 + _random.nextDouble() * 1.5,
+        life: 1.0,
+        maxLife: 0.6 + _random.nextDouble() * 0.5,
+      ));
+    }
+  }
+
   static double _sin(double x) {
-    x = x % (2 * 3.14159265);
-    if (x < 0) x += 2 * 3.14159265;
-    // 三阶近似，误差 < 0.02
+    x = x % 6.2831853;
+    if (x < 0) x += 6.2831853;
     final q = (x / 3.14159265 - 2).abs();
     return (1 - q * q) * (q < 1 ? 1 : -1);
   }
 
-  static double _cos(double x) => _sin(x + 3.14159265 / 2);
-
   @override
-  bool shouldRepaint(_FlowingGradientPainter old) => true;
+  bool shouldRepaint(covariant _FireworksBokehPainter old) => true;
+}
+
+// ---- 粒子数据结构 ----
+class _FwRocket {
+  double x, y, targetY, vx, vy;
+  final double hue;
+  double life = 1.0;
+  _FwRocket({
+    required this.x,
+    required this.y,
+    required this.targetY,
+    required this.vx,
+    required this.vy,
+    required this.hue,
+  });
+}
+
+class _FwSpark {
+  double x, y, vx, vy, hue, size, life, maxLife;
+  _FwSpark({
+    required this.x,
+    required this.y,
+    required this.vx,
+    required this.vy,
+    required this.hue,
+    required this.size,
+    required this.life,
+    required this.maxLife,
+  });
+}
+
+class _Bokeh {
+  double x, y, size, vx, vy, hue, alpha, pulsePhase;
+  _Bokeh({
+    required this.x,
+    required this.y,
+    required this.size,
+    required this.vx,
+    required this.vy,
+    required this.hue,
+    required this.alpha,
+    required this.pulsePhase,
+  });
 }
