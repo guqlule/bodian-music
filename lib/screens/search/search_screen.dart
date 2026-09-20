@@ -9,6 +9,8 @@ import '../../services/api/hot_search_service.dart';
 import '../../services/api/search_suggest_service.dart';
 import '../../providers/music_providers.dart';
 import '../../providers/app_providers.dart';
+import '../../providers/download_providers.dart';
+import '../../providers/settings_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/storage/storage_service.dart';
 
@@ -669,7 +671,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           itemBuilder: (context) => [
             const PopupMenuItem(value: 'play', child: Text('播放')),
             const PopupMenuItem(value: 'next', child: Text('下一首播放')),
-            const PopupMenuItem(value: 'add_to_playlist', child: Text('添加到播放列表')),
+            const PopupMenuItem(value: 'add_to_playlist', child: Text('添加到歌单')),
+            const PopupMenuItem(value: 'download', child: Text('下载')),
+            const PopupMenuItem(value: 'favorite', child: Text('我喜欢')),
           ],
           onSelected: (value) => _handleMenuAction(value, music),
         ),
@@ -697,8 +701,121 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('已添加到下一首播放')));
         break;
-      case 'add_to_playlist': _showAddToPlaylistDialog(music); break;
+      case 'add_to_playlist': _showAddToPlaylistSheet(music); break;
+      case 'download': _handleDownload(music); break;
+      case 'favorite':
+        final isFav = ref.read(favoritesProvider.notifier).isFavorite(music.id);
+        ref.read(favoritesProvider.notifier).toggleFavorite(music);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(isFav ? '已取消喜欢' : '已添加到我喜欢'),
+        ));
+        break;
     }
+  }
+
+  Future<void> _handleDownload(MusicInfo music) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final quality = ref.read(settingsProvider).quality;
+    try {
+      await ref.read(downloadProvider.notifier).download(music, quality: quality);
+      messenger.showSnackBar(const SnackBar(
+        content: Text('已加入下载队列，可在「下载管理」查看进度'),
+      ));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('下载失败: $e')));
+    }
+  }
+
+  void _showAddToPlaylistSheet(MusicInfo music) {
+    final playlists = ref.read(playlistProvider);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 12),
+              decoration: BoxDecoration(
+                  color: AppColors.divider,
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('添加到歌单',
+                  style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600)),
+            ),
+            if (playlists.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text('还没有歌单，先去创建一个吧',
+                    style:
+                        TextStyle(color: AppColors.textHint, fontSize: 13)),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: playlists.length,
+                  itemBuilder: (context, index) {
+                    final pl = playlists[index];
+                    return ListTile(
+                      leading: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                            color: AppColors.primarySoftColor,
+                            borderRadius: BorderRadius.circular(10)),
+                        child: pl.coverUrl != null && pl.coverUrl!.isNotEmpty
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(pl.coverUrl!,
+                                    cacheWidth: 200,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (
+                                      _, __, ___
+                                    ) =>
+                                        const Icon(
+                                            Icons.queue_music_rounded,
+                                            color: AppColors.primary,
+                                            size: 20)),
+                              )
+                            : Icon(Icons.queue_music_rounded,
+                                color: AppColors.primary, size: 20),
+                      ),
+                      title: Text(pl.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: AppColors.textPrimary, fontSize: 14)),
+                      subtitle: Text('${pl.songs.length} 首',
+                          style: TextStyle(
+                              color: AppColors.textHint, fontSize: 11)),
+                      onTap: () {
+                        ref
+                            .read(playlistProvider.notifier)
+                            .addToPlaylist(pl.id, music);
+                        Navigator.pop(sheetContext);
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('已添加到「${pl.name}」')));
+                      },
+                    );
+                  },
+                ),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   void _playMusic(MusicInfo music) {

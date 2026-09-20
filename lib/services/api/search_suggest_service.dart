@@ -17,6 +17,8 @@ class SearchSuggestService {
     if (keyword.trim().isEmpty) return const [];
     try {
       switch (source) {
+        case 'all':
+          return await _allSuggest(keyword);
         case 'kw':
           return await _kwSuggest(keyword);
         case 'kg':
@@ -31,6 +33,24 @@ class SearchSuggestService {
     } catch (_) {
       return const [];
     }
+  }
+
+  /// 全部源 —— 四源并行联想并去重合并
+  Future<List<String>> _allSuggest(String keyword) async {
+    final results = await Future.wait([
+      _kwSuggest(keyword).catchError((_) => const <String>[]),
+      _kgSuggest(keyword).catchError((_) => const <String>[]),
+      _txSuggest(keyword).catchError((_) => const <String>[]),
+      _wySuggest(keyword).catchError((_) => const <String>[]),
+    ]);
+    final seen = <String>{};
+    final merged = <String>[];
+    for (final list in results) {
+      for (final w in list) {
+        if (w.isNotEmpty && seen.add(w)) merged.add(w);
+      }
+    }
+    return merged.take(15).toList();
   }
 
   /// 酷我 —— 对齐 kw/tipSearch.js

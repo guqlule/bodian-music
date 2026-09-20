@@ -69,9 +69,11 @@ class MusicSearchService {
 
     final allList = <MusicInfo>[];
     var total = 0;
+    var anyHasMore = false;
     for (final r in results) {
       allList.addAll(r.list);
       total += r.total;
+      if (r.hasMore) anyHasMore = true;
     }
 
     return SearchResult(
@@ -80,6 +82,7 @@ class MusicSearchService {
       page: page,
       pageSize: pageSize,
       source: 'all',
+      hasMoreOverride: anyHasMore,
     );
   }
 }
@@ -651,6 +654,7 @@ class SearchResult {
   final int page;
   final int pageSize;
   final String source;
+  final bool? hasMoreOverride;
 
   SearchResult({
     required this.list,
@@ -658,7 +662,8 @@ class SearchResult {
     required this.page,
     required this.pageSize,
     required this.source,
+    this.hasMoreOverride,
   });
 
-  bool get hasMore => list.length < total;
+  bool get hasMore => hasMoreOverride ?? (list.length < total);
 }

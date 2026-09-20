@@ -104,6 +104,16 @@ class SearchNotifier extends StateNotifier<SearchState> {
         page: state.page + 1,
       );
 
+      // 全部源模式下若该页无任何结果，直接停止后续请求
+      if (searchResult.list.isEmpty) {
+        state = state.copyWith(
+          isLoading: false,
+          hasMore: false,
+          page: state.page + 1,
+        );
+        return;
+      }
+
       state = state.copyWith(
         results: [...state.results, ...searchResult.list],
         isLoading: false,
