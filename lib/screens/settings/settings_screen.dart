@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/app_providers.dart';
 import '../../services/player/player_service.dart';
 import '../../services/sync/sync_service.dart';
 import '../../core/storage/storage_service.dart';
@@ -351,8 +352,9 @@ class SettingsScreen extends ConsumerWidget {
 
   Widget _buildSyncTile(BuildContext context, WidgetRef ref, AppSettings settings,
       SettingsNotifier settingsNotifier) {
-    final service = SyncService();
-    final connected = service.isConnected;
+    // 实时连接状态：连接成功/断开/错误都会刷新本卡片
+    final connState = ref.watch(syncConnectionProvider);
+    final connected = connState.valueOrNull == SyncConnectionState.connected;
     final subtitle = settings.syncHost.isEmpty
         ? '配置同步服务器'
         : (connected ? '已连接 · ${settings.syncHost}' : '未连接 · ${settings.syncHost}');
@@ -360,7 +362,7 @@ class SettingsScreen extends ConsumerWidget {
       icon: connected ? Icons.cloud_done_rounded : Icons.cloud_sync_rounded,
       title: '歌单同步',
       subtitle: subtitle,
-      onTap: connected ? () => _showDisconnectDialog(context, ref, service, settingsNotifier)
+      onTap: connected ? () => _showDisconnectDialog(context, ref, SyncService(), settingsNotifier)
                       : () => _showSyncDialog(context, ref, settingsNotifier),
     );
   }
