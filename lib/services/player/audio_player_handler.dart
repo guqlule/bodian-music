@@ -136,26 +136,36 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     try {
       final hasLine = line != null && line.isNotEmpty;
       final cur = _currentItem!;
+      final dur = _player.duration;
 
+      // 灵动岛/通知栏/Jovi InCar 卡片读 audio_service 的 this.mediaMetadata（由 mediaItem.add 驱动）
+      // 蓝牙车机读 session.controller.metadata（由 MethodChannel 驱动）
+      // 双路径：mediaItem.add() 走 audio_service 流，MethodChannel 直接写 session。
+      // audio_service 的 Java setMediaItem 用 new Builder() 会重建 metadata，
+      // 可能覆盖 MethodChannel 刚设的歌词。所以 MethodChannel 延迟 300ms 执行，确保最后写。
       _currentItem = MediaItem(
         id: _baseMediaId,
         title: hasLine ? line : cur.title,
         artist: cur.artist,
         album: cur.album ?? '',
         artUri: cur.artUri,
-        duration: cur.duration,
+        duration: dur ?? cur.duration,
         displayTitle: hasLine ? line : (cur.displayTitle ?? cur.title),
         displaySubtitle: cur.artist ?? '',
         displayDescription: hasLine ? line : (cur.album ?? ''),
         extras: {'lyric': line ?? ''},
       );
+      mediaItem.add(_currentItem);
 
-      MediaSessionService().updateLyric(
-        title: hasLine ? line! : cur.title,
-        artist: cur.artist ?? '',
-        album: cur.album ?? '',
-        lyric: text,
-      );
+      Future.delayed(const Duration(milliseconds: 300), () {
+        MediaSessionService().updateLyric(
+          title: hasLine ? line! : cur.title,
+          artist: cur.artist ?? '',
+          album: cur.album ?? '',
+          lyric: text,
+          durationMs: (dur ?? cur.duration)?.inMilliseconds,
+        );
+      });
     } catch (_) {}
   }
 
