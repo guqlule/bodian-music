@@ -604,6 +604,31 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
                   child: Icon(effectIconFor(_currentEffect), color: AppColors.textSecondary, size: 18),
                 ),
               ),
+              const SizedBox(width: 8),
+              // 定时关闭快捷入口：激活时高亮并显示剩余分钟数
+              Consumer(builder: (context, ref, _) {
+                final active = ref.watch(sleepTimerActiveProvider).valueOrNull ?? false;
+                final remaining = ref.watch(sleepTimerRemainingProvider).valueOrNull;
+                final min = active && remaining != null
+                    ? ((remaining.inSeconds + 59) ~/ 60).toString()
+                    : null;
+                return GestureDetector(
+                  onTap: () => context.push('/sleep-timer'),
+                  child: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: active ? AppColors.primarySoftColor : AppColors.card,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: active ? null : AppNeumorphic.flat,
+                    ),
+                    child: Icon(
+                      Icons.timer_rounded,
+                      color: active ? AppColors.primary : AppColors.textSecondary,
+                      size: 18,
+                    ),
+                  ),
+                );
+              }),
             ],
           ),
         ],
