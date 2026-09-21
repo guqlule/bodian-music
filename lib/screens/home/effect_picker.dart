@@ -11,16 +11,8 @@ IconData effectIconFor(VisualizerEffect effect) {
       return Icons.waves_rounded;
     case VisualizerEffect.circle:
       return Icons.donut_large_rounded;
-    case VisualizerEffect.ring:
-      return Icons.circle_outlined;
-    case VisualizerEffect.particles:
-      return Icons.scatter_plot_rounded;
-    case VisualizerEffect.fireworks:
-      return Icons.celebration_rounded;
-    case VisualizerEffect.aurora:
-      return Icons.auto_awesome_rounded;
-    case VisualizerEffect.water:
-      return Icons.water_drop_rounded;
+    case VisualizerEffect.radial:
+      return Icons.radar_rounded;
   }
 }
 

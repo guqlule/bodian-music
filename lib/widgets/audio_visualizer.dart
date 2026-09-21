@@ -9,11 +9,7 @@ enum VisualizerEffect {
   bars('频谱'),
   wave('波浪'),
   circle('圆环'),
-  ring('脉冲'),
-  particles('粒子'),
-  fireworks('烟花'),
-  aurora('极光'),
-  water('水波');
+  radial('放射');
 
   final String label;
   const VisualizerEffect(this.label);
@@ -35,8 +31,6 @@ Color _beatColor(double alpha) {
 }
 
 // 共享缓存 Paint 对象，避免每帧 GC 压力
-// 注意：以下 _p* 函数全部返回**同一个** Paint 实例，仅修改 color/strokeWidth/strokeCap
-// 调用方必须保证不在调用之间持有返回值（Flutter 引擎在 drawXxx 调用前会完成读取）
 Paint _p(Color c) => _fillPaintCache..color = c;
 Paint _pFill(Color c) => _fillPaintCache..color = c;
 Paint _pStroke(Color c, double w) => _strokePaintCache
@@ -61,11 +55,6 @@ final Paint _glowPaintCache = Paint()
 Paint _pGlow(Color c, double w) => _glowPaintCache
   ..color = c
   ..strokeWidth = w;
-
-// aurora 光线 2 级 blur 缓存（18/36），只更新 shader（原 4 级过于昂贵）
-final List<Paint> _auroraBlurCaches = List.generate(2, (i) => Paint()
-  ..style = PaintingStyle.fill
-  ..maskFilter = MaskFilter.blur(BlurStyle.normal, 18.0 + i * 18.0));
 
 void _paintBg(Canvas canvas, Size size, double volume) {
   canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), _pFill(AppColors.background));
@@ -104,18 +93,7 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
   int _frame = 0;
   Timer? _timer;
   final List<double> _peaks = [];
-  final List<_Particle> _particles = [];
-  final List<_CosmicStar> _cosmicStars = [];
-  final List<_Firework> _fireworks = [];
-  final List<_FireworkSpark> _fireworkSparks = [];
-  final List<_AuroraCurtain> _auroraCurtains = [];
-  final List<_AuroraStar> _auroraStars = [];
-  final List<_Bubble> _bubbles = [];
-  final List<_LightRay> _lightRays = [];
-  final List<_Caustic> _caustics = [];
-  final List<_WaterDrop> _waterDrops = [];
   final List<_Shockwave> _shockwaves = [];
-  final List<_WaterRipple> _ripples = [];
   final Random _random = Random();
   final ChangeNotifier _repaint = ChangeNotifier();
 
@@ -149,9 +127,6 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
   }
 
   void _syncTimer() {
-    // 30fps：音视频谱不需要 60fps，每帧含全屏重绘 + 模糊绘制，30fps 已足够流畅且显著降低 GPU 压力
-    // 重要：定时器必须**持续运行**，不依赖 widget.playing。
-    // 否则暂停时 _frame 停止递增，sin 兜底模拟动画也会冻结。
     _timer ??= Timer.periodic(const Duration(milliseconds: 33), (_) {
       _tick();
     });
@@ -164,7 +139,6 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
           DateTime.now().difference(_lastNativeData).inMilliseconds <= 1500;
       final staleMs = DateTime.now().difference(_lastNativeData).inMilliseconds;
       if (!alive) {
-        // 原生数据流中断/全零：通知外部重启捕获 + 切模拟频谱兜底
         if (!_staleNotified) {
           _staleNotified = true;
           _simActive = true;
@@ -172,7 +146,6 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
         }
         _updateSim();
       } else if (_simActive) {
-        // 原生数据恢复，模拟退位
         _simActive = false;
         _staleNotified = false;
         _simFreqs = [];
@@ -181,26 +154,23 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
         if (staleMs > 1500) _lastNativeData = DateTime.now().subtract(const Duration(milliseconds: 100));
       }
     } else if (widget.loading) {
-      // 加载中（playing=false, loading=true）：保持模拟频谱，显示轻柔脉动
       if (!_simActive) {
         _simActive = true;
         _staleNotified = false;
       }
       _updateSimLoading();
     } else {
-      // 未播放且未加载时清空模拟
       _simActive = false;
       _staleNotified = false;
       _simFreqs = [];
     }
-    // 始终触发重绘（_frame 改变后 painter 才能读到新的 simPhase）
     _repaint.notifyListeners();
   }
 
   /// 加载中模拟：比正常模拟更柔和，振幅更低
   void _updateSimLoading() {
-    final t = _frame * 0.03; // 更慢的节奏
-    final vol = 0.3 + 0.15 * sin(t * 0.7); // 更低的振幅
+    final t = _frame * 0.03;
+    final vol = 0.3 + 0.15 * sin(t * 0.7);
     if (_simFreqs.isEmpty) _simFreqs = List<double>.filled(64, 0);
     for (int i = 0; i < _simFreqs.length; i++) {
       final fi = i / _simFreqs.length;
@@ -276,97 +246,10 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
         return CustomPaint(painter: _WavePainter(state: this, repaint: _repaint));
       case VisualizerEffect.circle:
         return CustomPaint(painter: _CirclePainter(state: this, repaint: _repaint));
-      case VisualizerEffect.ring:
-        return CustomPaint(painter: _RingPainter(state: this, repaint: _repaint));
-      case VisualizerEffect.particles:
-        return CustomPaint(painter: _ParticlePainter(state: this, repaint: _repaint));
-      case VisualizerEffect.fireworks:
-        return CustomPaint(painter: _FireworksPainter(state: this, repaint: _repaint));
-      case VisualizerEffect.aurora:
-        return CustomPaint(painter: _AuroraPainter(state: this, repaint: _repaint));
-      case VisualizerEffect.water:
-        return CustomPaint(painter: _WaterPainter(state: this, repaint: _repaint));
+      case VisualizerEffect.radial:
+        return CustomPaint(painter: _RadialPainter(state: this, repaint: _repaint));
     }
   }
-}
-
-class _Particle {
-  double x, y, vx, vy, size, life, maxLife, hue;
-  _Particle({
-    required this.x, required this.y,
-    required this.vx, required this.vy,
-    required this.size, required this.life,
-    this.maxLife = 1.0, this.hue = 0,
-  });
-}
-
-class _CosmicStar {
-  double orbitRadius, angle, speed, size, brightness, trail;
-  int ring;
-  _CosmicStar({
-    required this.orbitRadius, required this.angle, required this.speed,
-    required this.size, required this.brightness, this.trail = 0, this.ring = 0,
-  });
-}
-
-class _Firework {
-  double x, y, targetY, vy, size, life, hue;
-  bool exploded;
-  _Firework({
-    required this.x, required this.y, required this.targetY,
-    required this.vy, required this.size, required this.life,
-    required this.hue, this.exploded = false,
-  });
-}
-
-class _FireworkSpark {
-  double x, y, vx, vy, size, life, maxLife, hue;
-  _FireworkSpark({
-    required this.x, required this.y,
-    required this.vx, required this.vy,
-    required this.size, required this.life,
-    required this.maxLife, required this.hue,
-  });
-}
-
-class _AuroraCurtain {
-  double x, width, swayPhase, swaySpeed, swayAmp, hueShift;
-  int ribbonCount;
-  _AuroraCurtain({
-    required this.x, required this.width, required this.swayPhase,
-    required this.swaySpeed, required this.swayAmp, required this.hueShift,
-    this.ribbonCount = 3,
-  });
-}
-
-class _AuroraStar {
-  double x, y, size, twinklePhase, twinkleSpeed;
-  _AuroraStar({required this.x, required this.y, required this.size,
-    required this.twinklePhase, required this.twinkleSpeed});
-}
-
-class _Bubble {
-  double x, y, vx, vy, radius, life, wobble;
-  _Bubble({required this.x, required this.y, required this.vx, required this.vy,
-    required this.radius, required this.life, this.wobble = 0});
-}
-
-class _LightRay {
-  double x, width, angle, intensity, speed;
-  _LightRay({required this.x, required this.width, required this.angle,
-    required this.intensity, required this.speed});
-}
-
-class _Caustic {
-  double x, y, size, life, phase;
-  _Caustic({required this.x, required this.y, required this.size,
-    required this.life, required this.phase});
-}
-
-class _WaterDrop {
-  double x, y, vx, vy, size, life;
-  _WaterDrop({required this.x, required this.y, required this.vx, required this.vy,
-    required this.size, required this.life});
 }
 
 class _Shockwave {
@@ -374,14 +257,8 @@ class _Shockwave {
   _Shockwave({required this.life});
 }
 
-class _WaterRipple {
-  double x, y, radius = 0, maxRadius, life;
-  _WaterRipple({required this.x, required this.y, required this.maxRadius, required this.life});
-}
-
 // ==================== 频谱柱体（霓虹渐变风格）====================
 
-// Bars painter 缓存 Paint 对象，避免每帧 GC
 final Paint _barsGlowPaint = Paint()..style = PaintingStyle.fill;
 final Paint _barsBarPaint = Paint()..style = PaintingStyle.fill;
 final Paint _barsReflectionPaint = Paint()..style = PaintingStyle.fill;
@@ -403,7 +280,6 @@ class _BarsPainter extends CustomPainter {
     final bass = state._spectrum.bass;
     final maxBarH = h * 0.72;
 
-    // 空数据时使用 sin 波模拟绘制，确保首帧/无数据时也有视觉反馈
     final useSim = freqs.isEmpty;
     final simPhase = state._frame * 0.06;
 
@@ -412,7 +288,6 @@ class _BarsPainter extends CustomPainter {
     final startX = gap;
 
     for (int i = 0; i < count; i++) {
-      // 空数据时用 sin 波模拟值，确保频谱始终可见
       int fi = 0;
       double value;
       if (useSim) {
@@ -426,7 +301,6 @@ class _BarsPainter extends CustomPainter {
       final x = startX + i * gap;
       final barH = max(2.0, maxBarH * value);
 
-      // 渐变色：底部深色 → 顶部亮色（直接 int 运算，避免 Color.lerp 中间分配）
       final t = i / max(1, count - 1);
       final warm = AppColors.isDark ? const Color(0xFFE8A04C) : const Color(0xFFC9884A);
       final cool = AppColors.isDark ? const Color(0xFF64B5F6) : const Color(0xFF5B9BD5);
@@ -443,7 +317,6 @@ class _BarsPainter extends CustomPainter {
         ((0.6 + value * 0.4) * 255).round(), br, bg, bb,
       );
 
-      // 柱体（渐变填充）
       final barRect = Rect.fromLTWH(x, baseY - barH, barW, barH);
       _barsBarPaint.shader = ui.Gradient.linear(
         Offset(0, baseY), Offset(0, baseY - barH),
@@ -462,7 +335,6 @@ class _BarsPainter extends CustomPainter {
         ));
       canvas.drawPath(barPath, _barsBarPaint);
 
-      // 柱体辉光（外层，无 blur 以避免 GPU 重绘）
       canvas.drawRRect(
         RRect.fromRectAndCorners(
           Rect.fromLTWH(x - 2, baseY - barH - 2, barW + 4, barH + 4),
@@ -472,7 +344,6 @@ class _BarsPainter extends CustomPainter {
         _pFill(barColor.withValues(alpha: 0.12 + value * 0.10)),
       );
 
-      // 倒影（镜像，渐变消隐）
       final refH = barH * 0.55;
       final refRect = Rect.fromLTWH(x, baseY + 3, barW, refH);
       _barsReflectionPaint.shader = ui.Gradient.linear(
@@ -488,13 +359,10 @@ class _BarsPainter extends CustomPainter {
         _barsReflectionPaint,
       );
 
-      // 峰值发光点
       final peak = useSim ? value : (state._peaks.length > fi ? state._peaks[fi] : value);
       final peakY = baseY - max(2.0, maxBarH * peak) - 6;
-      // 直接计算 peakColor 颜色（避开 withValues 分配）
       final peakA = ((0.6 + value * 0.4) * 0.9 * 255).round();
       final peakColor = Color.fromARGB(peakA, br, bg, bb);
-      // 辉光（无 blur）
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(x - 3, peakY - 2, barW + 6, 7),
@@ -502,7 +370,6 @@ class _BarsPainter extends CustomPainter {
         ),
         _pFill(Color.fromARGB(((0.6 + value * 0.4) * 0.30 * 255).round(), br, bg, bb)),
       );
-      // 实心点
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(x, peakY, barW, 3),
@@ -512,7 +379,6 @@ class _BarsPainter extends CustomPainter {
       );
     }
 
-    // 底部基线（渐变消隐）
     _barsLinePaint.shader = ui.Gradient.linear(
       Offset(w * 0.04, 0), Offset(w * 0.96, 0),
       [
@@ -533,7 +399,6 @@ class _BarsPainter extends CustomPainter {
 
 final Paint _waveFillPaint = Paint()..style = PaintingStyle.fill;
 final Paint _waveStrokePaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
-// 复用的 Path 缓存：4 层波浪 × (1 主路径 + 1 填充路径) = 8 次 Path() 分配 → 0
 final Path _wavePath = Path();
 final Path _waveFillPath = Path();
 
@@ -548,13 +413,11 @@ class _WavePainter extends CustomPainter {
     final h = size.height;
     final bass = state._spectrum.bass;
     final vol = state._spectrum.volume;
-    // 缓慢流动的时间基准（低频驱动）
     final t = state._frame * 0.025 + bass * 0.8;
 
     for (int layer = 0; layer < 4; layer++) {
       final path = _wavePath..reset();
       final yBase = h * (0.30 + layer * 0.15);
-      // 振幅：随音量缓动，层间递减
       final baseAmp = h * 0.10 * (1 - layer * 0.10);
       final amp = baseAmp * (0.4 + vol * 0.6);
       final tColor = _freqColor(layer, 4, 0.28 - layer * 0.03);
@@ -562,15 +425,12 @@ class _WavePainter extends CustomPainter {
       path.moveTo(0, yBase);
       for (double x = 0; x <= w; x += 6) {
         final p = x / w;
-        // 主波：慢速平滑
         final y = yBase +
             sin(p * 3.0 * pi + t * (0.8 + layer * 0.15) + layer * 1.2) * amp * 0.7 +
-            // 副波：更慢，增加层次
             sin(p * 1.8 * pi + t * 0.4 + layer * 0.6) * amp * 0.3;
         path.lineTo(x, y);
       }
 
-      // 渐变填充到底部（复用 _waveFillPath）
       _waveFillPath
         ..reset()
         ..addPath(path, Offset.zero)
@@ -582,7 +442,6 @@ class _WavePainter extends CustomPainter {
         [tColor, tColor.withValues(alpha: 0)],
       );
       canvas.drawPath(_waveFillPath, _waveFillPaint);
-      // 描边
       _waveStrokePaint
         ..color = tColor.withValues(alpha: 0.65)
         ..strokeWidth = 2.0 - layer * 0.15;
@@ -615,14 +474,12 @@ class _CirclePainter extends CustomPainter {
     final rotation = state._frame * 0.015;
     final beatFlash = state._spectrum.beat;
 
-    // 内圈辉光
     _circleInnerGlowPaint.shader = ui.Gradient.radial(
       center, baseRadius * 0.6,
       [AppColors.primaryDark.withValues(alpha: 0.15 + state._spectrum.bass * 0.1), AppColors.primaryDark.withValues(alpha: 0)],
     );
     canvas.drawCircle(center, baseRadius * 0.6, _circleInnerGlowPaint);
 
-    // 频率射线
     final count = min(values.length, 64);
     for (int i = 0; i < count; i++) {
       final angle = (2 * pi / count) * i - pi / 2 + rotation;
@@ -653,12 +510,10 @@ class _CirclePainter extends CustomPainter {
       }
     }
 
-    // 外圈
     final outerR = baseRadius * 1.2 + beatFlash * baseRadius * 0.1;
     canvas.drawCircle(center, outerR, _pStroke(AppColors.primaryDark.withValues(alpha: 0.4 + beatFlash * 0.3), 2.2));
     canvas.drawCircle(center, baseRadius * 0.38, _pStroke(AppColors.primaryDark.withValues(alpha: 0.25), 1.5));
 
-    // 核心
     final coreR = 5 + state._spectrum.bass * 10;
     canvas.drawCircle(center, coreR + 3, _pGlow(AppColors.primaryDark.withValues(alpha: 0.4), 8));
     canvas.drawCircle(center, coreR, _pFill(AppColors.primaryDark.withValues(alpha: 0.85)));
@@ -668,788 +523,68 @@ class _CirclePainter extends CustomPainter {
   bool shouldRepaint(covariant _CirclePainter old) => true;
 }
 
-// ==================== 脉冲（节拍驱动同心圆 + 冲击波）====================
+// ==================== 放射（圆形频谱柱体）====================
 
-final Paint _ringCorePaint = Paint()..style = PaintingStyle.fill;
-final Paint _ringGlowPaint = Paint()..style = PaintingStyle.fill;
-final Paint _ringStrokePaint = Paint()..style = PaintingStyle.stroke;
-final Paint _ringLinePaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
+final Paint _radialBarPaint = Paint()..style = PaintingStyle.fill;
+final Paint _radialGlowPaint = Paint()..style = PaintingStyle.fill;
+final Paint _radialCorePaint = Paint()..style = PaintingStyle.fill;
+final Paint _radialLinePaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
 
-class _RingPainter extends CustomPainter {
+class _RadialPainter extends CustomPainter {
   final _AudioVisualizerState state;
-  _RingPainter({required this.state, required super.repaint});
+  _RadialPainter({required this.state, required super.repaint});
 
   @override
   void paint(Canvas canvas, Size size) {
     _paintBg(canvas, size, state._spectrum.volume);
     final center = Offset(size.width / 2, size.height * 0.50);
-    final maxR = min(size.width, size.height) * 0.42;
+    final maxR = min(size.width, size.height) * 0.40;
     final values = state._spectrum.frequencies;
-    if (values.isEmpty) return;
     final bass = state._spectrum.bass;
-    final beat = state._spectrum.beat;
     final vol = state._spectrum.volume;
-    final t = state._frame * 0.02;
+    final t = state._frame * 0.012;
 
-    // 核心辉光（随低音呼吸）
-    final coreR = 6 + bass * 10;
-    final coreGlowR = coreR + 8 + bass * 6;
-    _ringGlowPaint.color = AppColors.primaryDark.withValues(alpha: 0.25 + bass * 0.15);
-    canvas.drawCircle(center, coreGlowR, _ringGlowPaint);
-    _ringCorePaint.color = AppColors.primaryDark.withValues(alpha: 0.8 + beat * 0.2);
-    canvas.drawCircle(center, coreR, _ringCorePaint);
+    _radialGlowPaint.shader = ui.Gradient.radial(
+      center, maxR * 0.35,
+      [AppColors.primaryDark.withValues(alpha: 0.12 + bass * 0.08), AppColors.primaryDark.withValues(alpha: 0)],
+    );
+    canvas.drawCircle(center, maxR * 0.35, _radialGlowPaint);
 
-    // 同心频率环（6 层，每层对应一个频段）
-    for (int i = 0; i < 6; i++) {
-      final idx = (i * values.length / 6).floor().clamp(0, values.length - 1);
-      final v = values[idx];
-      // 缓慢呼吸 + 频率响应
-      final breathe = 0.5 + 0.5 * sin(t * 0.8 + i * 1.1);
-      final r = maxR * (0.15 + v * 0.50 + breathe * 0.08);
-      final alpha = (0.55 - i * 0.06).clamp(0.2, 1.0);
-      final color = _freqColor(i, 6, alpha);
-      final strokeW = max(1.0, 2.5 + v * 2.0 - i * 0.15);
+    final coreR = 5 + bass * 8;
+    canvas.drawCircle(center, coreR + 4, _pGlow(AppColors.primaryDark.withValues(alpha: 0.3), 6));
+    canvas.drawCircle(center, coreR, _pFill(AppColors.primaryDark.withValues(alpha: 0.7)));
 
-      // 辉光
-      _ringGlowPaint.color = color.withValues(alpha: 0.25);
-      canvas.drawCircle(center, r, _ringGlowPaint);
-      // 实线
-      _ringStrokePaint
+    if (values.isEmpty) {
+      canvas.drawCircle(center, maxR * 0.82, _pStroke(AppColors.primaryDark.withValues(alpha: 0.1), 1));
+      return;
+    }
+
+    final barCount = min(values.length, 64);
+    final innerR = maxR * 0.28;
+    final maxBarH = maxR * 0.55;
+
+    for (int i = 0; i < barCount; i++) {
+      final angle = (2 * pi / barCount) * i - pi / 2 + t;
+      final v = values[i];
+      final barH = max(1.5, maxBarH * v);
+
+      final color = _freqColor(i, barCount, 0.45 + v * 0.55);
+
+      final p1 = center + Offset(cos(angle), sin(angle)) * innerR;
+      final p2 = center + Offset(cos(angle), sin(angle)) * (innerR + barH);
+
+      _radialGlowPaint.color = color.withValues(alpha: 0.2);
+      canvas.drawLine(p1, center + Offset(cos(angle), sin(angle)) * (innerR + barH + 3), _radialGlowPaint);
+      _radialLinePaint
         ..color = color
-        ..strokeWidth = strokeW;
-      canvas.drawCircle(center, r, _ringStrokePaint);
+        ..strokeWidth = max(1.5, (2 * pi * (innerR + barH * 0.5) / barCount) * 0.35);
+      canvas.drawLine(p1, p2, _radialLinePaint);
     }
 
-    // 节拍冲击波（向外扩散）
-    for (final wave in state._shockwaves) {
-      final progress = 1.0 - wave.life;
-      final r = maxR * (0.15 + progress * 1.3);
-      final alpha = wave.life.clamp(0.0, 1.0);
-      if (alpha > 0.02 && r > 0) {
-        // 直接 int 运算，避开 withValues 分配（每帧最多 5 个波 × 2 = 10 次）
-        _ringGlowPaint.color = Color.fromARGB((alpha * 0.4 * 255).round(), 0xB0, 0x90, 0x6B);
-        canvas.drawCircle(center, r, _ringGlowPaint);
-        _ringStrokePaint
-          ..color = Color.fromARGB((alpha * 0.7 * 255).round(), 0xB0, 0x90, 0x6B)
-          ..strokeWidth = 2.0 * wave.life;
-        canvas.drawCircle(center, r, _ringStrokePaint);
-      }
-      wave.life -= 0.016;
-    }
-    // 反向遍历就地移除死亡元素（避免 removeWhere 闭包分配）
-    final sw = state._shockwaves;
-    for (int i = sw.length - 1; i >= 0; i--) {
-      if (sw[i].life <= 0) sw.removeAt(i);
-    }
-
-    // 外圈频率刻度（更细、更密）
-    for (int i = 0; i < 48; i++) {
-      final angle = (2 * pi / 48) * i + t * 0.15;
-      final idx = (i * values.length / 48).floor().clamp(0, values.length - 1);
-      final v = values[idx];
-      final innerR = maxR * 0.85;
-      final outerR = innerR + maxR * 0.12 * v;
-      final color = _freqColor(i, 48, 0.2 + v * 0.55);
-      _ringLinePaint
-        ..color = color
-        ..strokeWidth = 1.5;
-      canvas.drawLine(
-        center + Offset(cos(angle), sin(angle)) * innerR,
-        center + Offset(cos(angle), sin(angle)) * outerR,
-        _ringLinePaint,
-      );
-    }
+    final outerR = maxR * 0.82 + vol * maxR * 0.05;
+    canvas.drawCircle(center, outerR, _pStroke(AppColors.primaryDark.withValues(alpha: 0.2 + vol * 0.15), 1.2));
   }
 
   @override
-  bool shouldRepaint(covariant _RingPainter old) => true;
-}
-
-// ==================== 星尘宇宙 ====================
-
-final Paint _particleCoreGlowPaint = Paint()..style = PaintingStyle.fill;
-final Paint _particleFlarePaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
-final Paint _particleConPaint = Paint()..style = PaintingStyle.stroke;
-
-class _ParticlePainter extends CustomPainter {
-  final _AudioVisualizerState state;
-  _ParticlePainter({required this.state, required super.repaint});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    _paintBg(canvas, size, state._spectrum.volume);
-    final w = size.width;
-    final h = size.height;
-    final cx = w * 0.5;
-    final cy = h * 0.5;
-    final spectrum = state._spectrum;
-    final random = state._random;
-    final frame = state._frame;
-
-    // 中心天体脉冲
-    final coreR = 8 + spectrum.bass * 22 + spectrum.volume * 8;
-    _particleCoreGlowPaint.shader = ui.Gradient.radial(
-      Offset(cx, cy), coreR * 2.5,
-      [
-        AppColors.primaryDark.withValues(alpha: 0.35 + spectrum.bass * 0.25),
-        AppColors.primaryDark.withValues(alpha: 0.08),
-        AppColors.primaryDark.withValues(alpha: 0),
-      ],
-      [0.0, 0.4, 1.0],
-    );
-    canvas.drawCircle(Offset(cx, cy), coreR * 2.5, _particleCoreGlowPaint);
-    canvas.drawCircle(Offset(cx, cy), coreR, _pFill(AppColors.primaryDark.withValues(alpha: 0.6 + spectrum.bass * 0.3)));
-    canvas.drawCircle(Offset(cx, cy), coreR * 0.45, _pFill(Colors.white.withValues(alpha: 0.7)));
-
-    // 初始化恒星轨道（3圈，每圈 8 颗星）
-    if (state._cosmicStars.isEmpty) {
-      for (int ring = 0; ring < 3; ring++) {
-        for (int i = 0; i < 8; i++) {
-          state._cosmicStars.add(_CosmicStar(
-            orbitRadius: 50 + ring * 55.0,
-            angle: i * 2 * pi / 8 + ring * 0.3,
-            speed: (0.015 - ring * 0.003) * (random.nextDouble() > 0.5 ? 1 : -1),
-            size: 2.5 - ring * 0.5 + random.nextDouble() * 1.5,
-            brightness: 0.7 - ring * 0.15,
-            ring: ring,
-          ));
-        }
-      }
-    }
-
-    // 更新 & 绘制恒星
-    final freqs = spectrum.frequencies;
-    for (final star in state._cosmicStars) {
-      final freqIndex = freqs.isEmpty ? 0
-          : (star.orbitRadius / 180 * (freqs.length - 1)).round().clamp(0, freqs.length - 1);
-      final freqVal = freqs.isNotEmpty ? freqs[freqIndex] : 0.0;
-      star.angle += star.speed + freqVal * 0.008;
-      final breathe = 1.0 + spectrum.bass * 0.15;
-      final px = cx + cos(star.angle) * star.orbitRadius * breathe;
-      final py = cy + sin(star.angle) * star.orbitRadius * breathe;
-
-      // 尾迹
-      final trailLen = max(0.0, (sqrt(star.speed * star.speed) * 18 + freqVal * 8));
-      if (trailLen > 2) {
-        final trailPath = _cosmicTrailPath..reset();
-        trailPath.moveTo(px, py);
-        for (int t = 1; t <= 12; t++) {
-          final ta = star.angle - star.speed * t * 1.5;
-          final tr = star.orbitRadius * breathe - t * 0.8;
-          trailPath.lineTo(cx + cos(ta) * tr, cy + sin(ta) * tr);
-        }
-        canvas.drawPath(trailPath, _pStroke(
-          _freqColor(star.ring, 3, star.brightness * 0.3),
-          star.size * 0.6,
-        ));
-      }
-
-      // 星体
-      final alpha = (star.brightness * (0.6 + freqVal * 0.4)).clamp(0.0, 1.0);
-      final color = _freqColor(star.ring, 3, alpha);
-      canvas.drawCircle(Offset(px, py), star.size * (1 + freqVal * 0.3), _pFill(color));
-
-      // 十字星芒
-      if (star.size > 2.5 && alpha > 0.5) {
-        final flareLen = star.size * 3 * alpha;
-        _particleFlarePaint
-          ..color = color.withValues(alpha: alpha * 0.4)
-          ..strokeWidth = 0.8;
-        canvas.drawLine(Offset(px - flareLen, py), Offset(px + flareLen, py), _particleFlarePaint);
-        canvas.drawLine(Offset(px, py - flareLen), Offset(px, py + flareLen), _particleFlarePaint);
-      }
-    }
-
-    // 节拍爆发粒子
-    if (spectrum.beat > 0.55 && state._particles.length < 120) {
-      for (int i = 0; i < 30; i++) {
-        final angle = random.nextDouble() * 2 * pi;
-        final speed = 3.0 + random.nextDouble() * 5;
-        state._particles.add(_Particle(
-          x: cx, y: cy,
-          vx: cos(angle) * speed, vy: sin(angle) * speed,
-          size: 1.5 + random.nextDouble() * 3,
-          life: 1.0, maxLife: 0.6 + random.nextDouble() * 0.5,
-          hue: random.nextDouble(),
-        ));
-      }
-    }
-
-    // 更新爆发粒子
-    for (final p in state._particles) {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vx *= 0.965;
-      p.vy *= 0.965;
-      p.life -= 0.016 / p.maxLife;
-    }
-    final ps = state._particles;
-    for (int i = ps.length - 1; i >= 0; i--) {
-      if (ps[i].life <= 0) ps.removeAt(i);
-    }
-
-    // 绘制爆发粒子
-    for (final p in state._particles) {
-      final alpha = p.life.clamp(0.0, 1.0);
-      final color = _freqColor((p.hue * 6).floor(), 6, alpha * 0.85);
-      final radius = p.size * p.life;
-      // 外晕
-      canvas.drawCircle(Offset(p.x, p.y), radius * 3, _pFill(color.withValues(alpha: alpha * 0.08)));
-      // 内核
-      canvas.drawCircle(Offset(p.x, p.y), radius, _pFill(color));
-    }
-
-    // 恒星间连线（星座）
-    final starPositions = state._cosmicStars.map((s) {
-      final breathe = 1.0 + spectrum.bass * 0.15;
-      return Offset(cx + cos(s.angle) * s.orbitRadius * breathe, cy + sin(s.angle) * s.orbitRadius * breathe);
-    }).toList();
-    for (int i = 0; i < starPositions.length; i++) {
-      for (int j = i + 1; j < starPositions.length; j++) {
-        final d = (starPositions[i] - starPositions[j]).distance;
-        if (d < 90) {
-          final alpha = (1.0 - d / 90) * 0.12;
-          _particleConPaint
-            ..color = AppColors.primaryDark.withValues(alpha: alpha)
-            ..strokeWidth = 0.6;
-          canvas.drawLine(starPositions[i], starPositions[j], _particleConPaint);
-        }
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ParticlePainter old) => true;
-}
-
-// ==================== 烟花 ====================
-
-final Paint _fwBgPaint = Paint()..style = PaintingStyle.fill;
-final Paint _fwRocketPaint = Paint()..style = PaintingStyle.fill;
-final Paint _fwSparkPaint = Paint()..style = PaintingStyle.fill;
-final Paint _fwTrailPaint = Paint()..style = PaintingStyle.stroke..strokeWidth = 1.5;
-final Path _fwTrailPath = Path();
-final Path _cosmicTrailPath = Path();
-
-class _FireworksPainter extends CustomPainter {
-  final _AudioVisualizerState state;
-  _FireworksPainter({required this.state, required super.repaint});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    _paintBg(canvas, size, state._spectrum.volume);
-    final w = size.width;
-    final h = size.height;
-    final spectrum = state._spectrum;
-    final random = state._random;
-
-    // ---- 发射新的烟花 ----
-    if (spectrum.beat > 0.4 && state._fireworks.length < 6) {
-      final hue = random.nextDouble() * 360;
-      state._fireworks.add(_Firework(
-        x: w * (0.15 + random.nextDouble() * 0.7),
-        y: h,
-        targetY: h * (0.1 + random.nextDouble() * 0.35),
-        vy: -(8 + random.nextDouble() * 6 + spectrum.volume * 5),
-        size: 2 + random.nextDouble() * 2,
-        life: 1.0,
-        hue: hue,
-      ));
-    }
-
-    // ---- 更新 & 绘制烟花弹 ----
-    final fw = state._fireworks;
-    for (int i = fw.length - 1; i >= 0; i--) {
-      final f = fw[i];
-      if (!f.exploded) {
-        f.y += f.vy;
-        f.vy += 0.12;
-        if (f.y <= f.targetY || f.vy >= -1) {
-          f.exploded = true;
-          _explode(f, random, spectrum);
-        } else {
-          final alpha = f.life.clamp(0.0, 1.0);
-          _fwRocketPaint.color = Color.fromARGB(
-            (alpha * 255).round(), 255, 220, 100,
-          );
-          canvas.drawCircle(Offset(f.x, f.y), f.size * alpha, _fwRocketPaint);
-          _fwTrailPaint.color = Color.fromARGB((alpha * 120).round(), 255, 200, 80);
-          _fwTrailPath.reset();
-          _fwTrailPath.moveTo(f.x, f.y);
-          _fwTrailPath.lineTo(f.x + (random.nextDouble() - 0.5) * 2, f.y - f.vy * 3);
-          canvas.drawPath(_fwTrailPath, _fwTrailPaint);
-        }
-      } else {
-        fw.removeAt(i);
-      }
-    }
-
-    // ---- 更新 & 绘制爆炸火花 ----
-    for (final s in state._fireworkSparks) {
-      s.x += s.vx;
-      s.y += s.vy;
-      s.vy += 0.06;
-      s.vx *= 0.99;
-      s.life -= 0.012 / s.maxLife;
-    }
-    final sp = state._fireworkSparks;
-    for (int i = sp.length - 1; i >= 0; i--) {
-      if (sp[i].life <= 0) sp.removeAt(i);
-    }
-
-    for (final s in state._fireworkSparks) {
-      final alpha = s.life.clamp(0.0, 1.0);
-      final color = HSLColor.fromAHSL(alpha, s.hue, 0.9, 0.55 + alpha * 0.2).toColor();
-      _fwSparkPaint.color = color.withValues(alpha: alpha * 0.3);
-      canvas.drawCircle(Offset(s.x, s.y), s.size * 3 * alpha, _fwSparkPaint);
-      _fwSparkPaint.color = color;
-      canvas.drawCircle(Offset(s.x, s.y), s.size * alpha, _fwSparkPaint);
-    }
-
-    // ---- 底部环境光 ----
-    if (state._fireworkSparks.isNotEmpty || state._fireworks.isNotEmpty) {
-      final glowAlpha = (0.08 + spectrum.volume * 0.12).clamp(0.0, 0.25);
-      _fwBgPaint.shader = ui.Gradient.radial(
-        Offset(w * 0.5, h * 0.95), w * 0.6,
-        [
-          AppColors.primaryDark.withValues(alpha: glowAlpha),
-          AppColors.primaryDark.withValues(alpha: 0),
-        ],
-        [0.0, 1.0],
-      );
-      canvas.drawRect(Offset.zero & size, _fwBgPaint);
-    }
-  }
-
-  void _explode(_Firework f, Random random, SpectrumData spectrum) {
-    final count = 40 + (spectrum.volume * 30).round();
-    final speed = 3.0 + spectrum.bass * 4;
-    for (int i = 0; i < count; i++) {
-      final angle = random.nextDouble() * 2 * pi;
-      final spd = speed * (0.3 + random.nextDouble() * 0.7);
-      state._fireworkSparks.add(_FireworkSpark(
-        x: f.x, y: f.y,
-        vx: cos(angle) * spd, vy: sin(angle) * spd,
-        size: 1 + random.nextDouble() * 2,
-        life: 1.0, maxLife: 0.5 + random.nextDouble() * 0.5,
-        hue: f.hue + (random.nextDouble() - 0.5) * 30,
-      ));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _FireworksPainter old) => true;
-}
-// ==================== 极光（模糊光线）====================
-
-final Paint _auroraPulsePaint = Paint()..style = PaintingStyle.fill;
-final Paint _auroraBgGlowPaint = Paint(); // 缓存避免每帧分配
-final Path _auroraRayPath = Path(); // 缓存：避免每帧 ~16 次 Path() 分配
-
-class _AuroraPainter extends CustomPainter {
-  final _AudioVisualizerState state;
-  _AuroraPainter({required this.state, required super.repaint});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    _paintBg(canvas, size, state._spectrum.volume);
-    final w = size.width;
-    final h = size.height;
-    final spectrum = state._spectrum;
-    final random = state._random;
-    final frame = state._frame;
-    final t = frame * 0.025;
-
-    // 初始化模糊光线
-    if (state._auroraCurtains.isEmpty) {
-      for (int i = 0; i < 8; i++) {
-        state._auroraCurtains.add(_AuroraCurtain(
-          x: w * (0.05 + i * 0.12),
-          width: w * (0.06 + random.nextDouble() * 0.1),
-          swayPhase: random.nextDouble() * 2 * pi,
-          swaySpeed: 0.04 + random.nextDouble() * 0.04,
-          swayAmp: 25 + random.nextDouble() * 30,
-          hueShift: i * 0.12,
-          ribbonCount: 1,
-        ));
-      }
-    }
-
-    // 初始化星尘
-    if (state._auroraStars.isEmpty) {
-      for (int i = 0; i < 50; i++) {
-        state._auroraStars.add(_AuroraStar(
-          x: random.nextDouble() * w,
-          y: random.nextDouble() * h,
-          size: 0.5 + random.nextDouble() * 1.5,
-          twinklePhase: random.nextDouble() * 2 * pi,
-          twinkleSpeed: 0.03 + random.nextDouble() * 0.08,
-        ));
-      }
-    }
-
-// 背景微光（重用缓存 Paint，仅每帧更新 shader）
-    _auroraBgGlowPaint.shader = ui.Gradient.radial(
-      Offset(w * 0.5, h * 0.35), w * 0.8,
-      [
-        AppColors.primaryDark.withValues(alpha: 0.06 + spectrum.volume * 0.05),
-        AppColors.primaryDark.withValues(alpha: 0),
-      ],
-    );
-    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), _auroraBgGlowPaint);
-
-    // 绘制星尘
-    for (final star in state._auroraStars) {
-      final twinkle = 0.2 + 0.8 * ((sin(frame * star.twinkleSpeed + star.twinklePhase) + 1) / 2);
-      final alpha = twinkle * (0.25 + spectrum.volume * 0.2);
-      canvas.drawCircle(Offset(star.x, star.y), star.size * twinkle,
-          _pFill(Colors.white.withValues(alpha: alpha)));
-    }
-
-    // 绘制模糊光线
-    for (final ray in state._auroraCurtains) {
-      final sway = sin(t * ray.swaySpeed * 12 + ray.swayPhase) * ray.swayAmp;
-      final hueBase = (ray.hueShift + t * 0.015) % 1.0;
-      final freqMult = 0.4 + spectrum.volume * 0.6 + spectrum.bass * 0.4;
-
-      // 每条光线画多次，不同模糊度叠加出柔光效果（2 层，原 4 层过于昂贵）
-      for (int layer = 0; layer < 2; layer++) {
-        final layerFrac = layer / 1.0;
-        final alpha = (0.15 - layerFrac * 0.04) * freqMult;
-        final spread = ray.width * (1.0 + layerFrac * 1.5);
-
-        final hue = (hueBase + layerFrac * 0.08) % 1.0;
-        final color = HSVColor.fromAHSV(1.0, hue * 360, 0.65, 0.9).toColor();
-
-        // 光线：从顶部到底部的垂直渐变矩形，带横向摆动
-        final topX = ray.x + sway * 0.8;
-        final botX = ray.x + sway * 0.3 + sin(t * ray.swaySpeed * 6 + layer) * spread * 0.3;
-        final topY = h * (0.05 + layerFrac * 0.08);
-        final botY = h * (0.65 + layerFrac * 0.1);
-
-        final path = _auroraRayPath..reset();
-        path.moveTo(topX - spread * 0.5, topY);
-        path.lineTo(topX + spread * 0.5, topY);
-        path.lineTo(botX + spread * 0.7, botY);
-        path.lineTo(botX - spread * 0.7, botY);
-        path.close();
-
-        final paint = _auroraBlurCaches[layer]
-          ..shader = ui.Gradient.linear(
-            Offset(topX, topY), Offset(botX, botY),
-            [
-              color.withValues(alpha: 0.0),
-              color.withValues(alpha: alpha),
-              color.withValues(alpha: alpha * 0.8),
-              color.withValues(alpha: alpha * 0.3),
-              color.withValues(alpha: 0.0),
-            ],
-            [0.0, 0.15, 0.45, 0.8, 1.0],
-          );
-        canvas.drawPath(path, paint);
-      }
-    }
-
-    // 节拍增亮脉冲
-    if (spectrum.beat > 0.45) {
-      final beatAlpha = (spectrum.beat - 0.45) * 0.5;
-      _auroraPulsePaint.shader = ui.Gradient.radial(
-        Offset(w * 0.5, h * 0.3), w * 0.6,
-        [
-          AppColors.primaryDark.withValues(alpha: beatAlpha * 0.25),
-          AppColors.primaryDark.withValues(alpha: 0),
-        ],
-      );
-      canvas.drawRect(Rect.fromLTWH(0, 0, w, h), _auroraPulsePaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _AuroraPainter old) => true;
-}
-
-// ==================== 深海涟漪 ====================
-
-final Paint _waterDepthPaint = Paint()..style = PaintingStyle.fill;
-final Paint _waterRayPaint = Paint()..style = PaintingStyle.fill;
-final Paint _waterCausticPaint = Paint()..style = PaintingStyle.fill;
-final Paint _waterWaveFillPaint = Paint()..style = PaintingStyle.fill;
-final Paint _waterBubblePaint = Paint()..style = PaintingStyle.stroke..strokeWidth = 1.0;
-final Paint _waterDropPaint = Paint()..style = PaintingStyle.fill;
-final Paint _waterDropTrailPaint = Paint()..style = PaintingStyle.stroke;
-// 复用的 Path 缓存：避免每帧 5 次 Path() 分配（水波）+ 每次光线 Path() 分配
-final Path _waterWavePath = Path();
-final Path _waterWaveFillPath = Path();
-final Path _waterRayPath = Path();
-
-class _WaterPainter extends CustomPainter {
-  final _AudioVisualizerState state;
-  _WaterPainter({required this.state, required super.repaint});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    _paintBg(canvas, size, state._spectrum.volume);
-    final w = size.width;
-    final h = size.height;
-    final spectrum = state._spectrum;
-    final random = state._random;
-    final frame = state._frame;
-    final t = frame * 0.04;
-
-    // ---- 深海背景渐变 ----
-    _waterDepthPaint.shader = ui.Gradient.linear(
-      Offset(0, 0), Offset(0, h),
-      [
-        const Color(0xFF0A1628).withValues(alpha: 0.0),
-        const Color(0xFF0A1628).withValues(alpha: 0.5),
-        const Color(0xFF061020).withValues(alpha: 0.7),
-      ],
-      [0.0, 0.3, 1.0],
-    );
-    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), _waterDepthPaint);
-
-    // ---- 体积光（从顶部射入水中）----
-    if (state._lightRays.isEmpty) {
-      for (int i = 0; i < 6; i++) {
-        state._lightRays.add(_LightRay(
-          x: w * (0.1 + i * 0.15 + random.nextDouble() * 0.08),
-          width: 8 + random.nextDouble() * 20,
-          angle: -0.15 + random.nextDouble() * 0.3,
-          intensity: 0.06 + random.nextDouble() * 0.06,
-          speed: 0.02 + random.nextDouble() * 0.03,
-        ));
-      }
-    }
-    for (final ray in state._lightRays) {
-      final sway = sin(t * ray.speed * 10 + ray.x * 0.01) * 15;
-      final flicker = 0.7 + 0.3 * sin(frame * ray.speed + ray.x);
-      final alpha = ray.intensity * flicker * (0.6 + spectrum.volume * 0.4);
-
-      _waterRayPaint.shader = ui.Gradient.linear(
-        Offset(ray.x + sway, 0),
-        Offset(ray.x + sway + ray.angle * h, h),
-        [
-          AppColors.primaryDark.withValues(alpha: alpha * 1.5),
-          AppColors.primaryDark.withValues(alpha: alpha * 0.6),
-          AppColors.primaryDark.withValues(alpha: 0),
-        ],
-        [0.0, 0.4, 1.0],
-      );
-      final path = _waterRayPath..reset();
-      path.moveTo(ray.x + sway - ray.width * 0.5, 0);
-      path.lineTo(ray.x + sway + ray.width * 0.5, 0);
-      path.lineTo(ray.x + sway + ray.angle * h + ray.width * 1.2, h);
-      path.lineTo(ray.x + sway + ray.angle * h - ray.width * 0.3, h);
-      path.close();
-      canvas.drawPath(path, _waterRayPaint);
-    }
-
-    // ---- 焦散光斑（水底）----
-    if (state._caustics.isEmpty) {
-      for (int i = 0; i < 12; i++) {
-        state._caustics.add(_Caustic(
-          x: random.nextDouble() * w,
-          y: h * (0.7 + random.nextDouble() * 0.25),
-          size: 15 + random.nextDouble() * 35,
-          life: 1.0,
-          phase: random.nextDouble() * 2 * pi,
-        ));
-      }
-    }
-    for (final c in state._caustics) {
-      c.life -= 0.005;
-      c.x += sin(frame * 0.02 + c.phase) * 0.5;
-      if (c.life <= 0) {
-        c.x = random.nextDouble() * w;
-        c.y = h * (0.7 + random.nextDouble() * 0.25);
-        c.size = 15 + random.nextDouble() * 35;
-        c.life = 1.0;
-        c.phase = random.nextDouble() * 2 * pi;
-      }
-    }
-    for (final c in state._caustics) {
-      final alpha = c.life.clamp(0.0, 1.0) * (0.08 + spectrum.volume * 0.06);
-      final pulse = 0.8 + 0.2 * sin(frame * 0.08 + c.phase);
-      final s = c.size * pulse;
-
-      // 焦散图案（交叉椭圆）
-      _waterCausticPaint.color = AppColors.primaryDark.withValues(alpha: alpha);
-      canvas.drawOval(Rect.fromCenter(center: Offset(c.x, c.y), width: s, height: s * 0.6), _waterCausticPaint);
-      _waterCausticPaint.color = AppColors.primaryDark.withValues(alpha: alpha * 0.7);
-      canvas.drawOval(Rect.fromCenter(center: Offset(c.x, c.y), width: s * 0.6, height: s), _waterCausticPaint);
-    }
-
-    // ---- 涟漪（节拍触发）----
-    if (spectrum.beat > 0.35 && state._ripples.length < 12) {
-      final count = (spectrum.beat * 2).ceil();
-      for (int i = 0; i < count; i++) {
-        state._ripples.add(_WaterRipple(
-          x: w * 0.1 + random.nextDouble() * w * 0.8,
-          y: h * (0.2 + random.nextDouble() * 0.3),
-          maxRadius: 30 + random.nextDouble() * 100,
-          life: 1.0,
-        ));
-      }
-    }
-    for (final r in state._ripples) {
-      r.radius += 1.5 + spectrum.bass * 1.0;
-      r.life -= 0.01;
-    }
-    final rp = state._ripples;
-    for (int i = rp.length - 1; i >= 0; i--) {
-      if (rp[i].life <= 0) rp.removeAt(i);
-    }
-
-    for (final r in state._ripples) {
-      final alpha = r.life.clamp(0.0, 1.0);
-      // 多层同心圆
-      for (int ring = 0; ring < 3; ring++) {
-        final ringFrac = ring / 2.0;
-        final ringR = r.radius * (1.0 - ringFrac * 0.25);
-        final ringAlpha = alpha * (0.4 - ringFrac * 0.12);
-        final hue = (0.55 + ringFrac * 0.1) % 1.0;
-        final color = HSVColor.fromAHSV(1.0, hue * 360, 0.5, 0.8).toColor();
-        _waterBubblePaint
-          ..color = color.withValues(alpha: ringAlpha)
-          ..strokeWidth = 1.5 - ringFrac * 0.5;
-        canvas.drawCircle(Offset(r.x, r.y), ringR, _waterBubblePaint);
-      }
-      _waterCausticPaint.color = AppColors.primaryDark.withValues(alpha: alpha * 0.6);
-      canvas.drawCircle(Offset(r.x, r.y), 2, _waterCausticPaint);
-    }
-
-    // ---- 水面波浪（多层有机波）----
-    final surfaceY = h * 0.18;
-    for (int layer = 0; layer < 5; layer++) {
-      final lFrac = layer / 4.0;
-      final path = _waterWavePath..reset();
-      final yBase = surfaceY + layer * h * 0.04;
-      final amp = (6 + spectrum.volume * 14) * (1 - lFrac * 0.4);
-      final freq1 = 3.0 + lFrac * 1.5;
-      final freq2 = 7.0 + lFrac * 2;
-      final speed1 = 0.8 + lFrac * 0.2;
-      final speed2 = 1.5 + lFrac * 0.3;
-
-      path.moveTo(0, yBase);
-      for (double x = 0; x <= w; x += 2) {
-        final p = x / w;
-        final y = yBase +
-            sin(p * freq1 + t * speed1 + layer * 0.6) * amp * (1 + spectrum.bass * 0.35) +
-            sin(p * freq2 + t * speed2) * amp * 0.3 +
-            sin(p * 12 + t * 2.2 + layer) * amp * 0.12;
-        path.lineTo(x, y);
-      }
-
-      final waveHue = (0.5 + lFrac * 0.15) % 1.0;
-      final color = HSVColor.fromAHSV(1.0, waveHue * 360, 0.5, 0.75).toColor();
-      _waterWaveFillPaint.shader = ui.Gradient.linear(
-        Offset(0, yBase - amp), Offset(0, yBase + h * 0.15),
-        [color.withValues(alpha: 0.12 - lFrac * 0.02), color.withValues(alpha: 0)],
-      );
-      // 复用 _waterWaveFillPath：通过 addPath 复制主轨迹，然后追加底部封闭
-      _waterWaveFillPath
-        ..reset()
-        ..addPath(path, Offset.zero)
-        ..lineTo(w, yBase + h * 0.15)
-        ..lineTo(0, yBase + h * 0.15)
-        ..close();
-      canvas.drawPath(_waterWaveFillPath, _waterWaveFillPaint);
-
-      _waterBubblePaint
-        ..color = color.withValues(alpha: 0.5 - lFrac * 0.08)
-        ..strokeWidth = 1.8 - layer * 0.2
-        ..strokeCap = StrokeCap.round;
-      canvas.drawPath(path, _waterBubblePaint);
-    }
-
-    // ---- 气泡 ----
-    if (spectrum.volume > 0.05 && state._bubbles.length < 30) {
-      state._bubbles.add(_Bubble(
-        x: w * 0.1 + random.nextDouble() * w * 0.8,
-        y: h * (0.85 + random.nextDouble() * 0.1),
-        vx: (random.nextDouble() - 0.5) * 0.3,
-        vy: -(0.4 + random.nextDouble() * 1.0 + spectrum.bass * 0.8),
-        radius: 2 + random.nextDouble() * 5,
-        life: 1.0,
-      ));
-    }
-    for (final b in state._bubbles) {
-      b.x += b.vx + sin(frame * 0.06 + b.y * 0.03) * 0.4;
-      b.y += b.vy;
-      b.vy *= 0.998;
-      b.wobble = sin(frame * 0.1 + b.x * 0.05) * 2;
-      b.life -= 0.004;
-    }
-    final bb = state._bubbles;
-    for (int i = bb.length - 1; i >= 0; i--) {
-      if (bb[i].life <= 0 || bb[i].y < 0) bb.removeAt(i);
-    }
-
-    for (final b in state._bubbles) {
-      final alpha = b.life.clamp(0.0, 1.0);
-      final bx = b.x + b.wobble;
-      // 气泡外圈（直接 int 运算，避开 withValues 分配）
-      _waterBubblePaint
-        ..color = Color.fromARGB((alpha * 0.35 * 255).round(), 0xB0, 0x90, 0x6B)
-        ..strokeWidth = 1.0
-        ..style = PaintingStyle.stroke;
-      canvas.drawCircle(Offset(bx, b.y), b.radius, _waterBubblePaint);
-      // 高光点（白色）
-      _waterCausticPaint.color = Color.fromARGB((alpha * 0.45 * 255).round(), 0xFF, 0xFF, 0xFF);
-      canvas.drawCircle(Offset(bx - b.radius * 0.3, b.y - b.radius * 0.3), b.radius * 0.25, _waterCausticPaint);
-    }
-
-    // ---- 浮游粒子 ----
-    _waterCausticPaint.color = AppColors.primaryDark.withValues(alpha: 0.15 + spectrum.volume * 0.1);
-    for (int i = 0; i < 8; i++) {
-      final px = (w * 0.5 + sin(frame * 0.01 + i * 1.3) * w * 0.35);
-      final py = h * (0.3 + i * 0.07) + sin(frame * 0.02 + i * 0.8) * 8;
-      canvas.drawCircle(Offset(px, py), 1.2, _waterCausticPaint);
-    }
-
-    // ---- 节拍水花 ----
-    if (spectrum.beat > 0.6 && state._waterDrops.length < 40) {
-      for (int i = 0; i < 15; i++) {
-        state._waterDrops.add(_WaterDrop(
-          x: w * 0.2 + random.nextDouble() * w * 0.6,
-          y: surfaceY + 5,
-          vx: (random.nextDouble() - 0.5) * 3,
-          vy: -(4 + random.nextDouble() * 7),
-          size: 1.5 + random.nextDouble() * 2.5,
-          life: 1.0,
-        ));
-      }
-    }
-    for (final d in state._waterDrops) {
-      d.x += d.vx;
-      d.y += d.vy;
-      d.vy += 0.15; // 重力
-      d.life -= 0.025;
-    }
-    final wd = state._waterDrops;
-    for (int i = wd.length - 1; i >= 0; i--) {
-      if (wd[i].life <= 0) wd.removeAt(i);
-    }
-
-    final dropColor = HSVColor.fromAHSV(1.0, 200, 0.4, 0.85).toColor();
-    for (final d in state._waterDrops) {
-      final alpha = d.life.clamp(0.0, 1.0);
-      _waterDropPaint.color = dropColor.withValues(alpha: alpha * 0.7);
-      canvas.drawCircle(Offset(d.x, d.y), d.size * alpha, _waterDropPaint);
-      // 拖尾
-      if (d.vy.abs() > 1) {
-        _waterDropTrailPaint
-          ..color = dropColor.withValues(alpha: alpha * 0.3)
-          ..strokeWidth = d.size * 0.5;
-        canvas.drawLine(
-          Offset(d.x, d.y),
-          Offset(d.x - d.vx * 1.5, d.y - d.vy * 0.8),
-          _waterDropTrailPaint,
-        );
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _WaterPainter old) => true;
+  bool shouldRepaint(covariant _RadialPainter old) => true;
 }
