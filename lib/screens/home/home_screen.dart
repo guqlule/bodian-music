@@ -646,10 +646,13 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
   }
 
   Widget _buildPlayer(MusicInfo music, bool playing, AsyncValue<PlayMode> playMode, int index, int total) {
+    // 关键：每个非 Expanded 子项必须显式占用固定高度，
+    // 否则 flex 子项 Expanded 会撑满剩余空间，把下方的控件挤出屏幕。
+    // 之前的 KTV 高度跳变曾反复踩坑（见 6282da1/039d23c）。
     return Column(
       children: [
         _buildTopBar(),
-        // 频谱动画区域（点击进详情，滑动手势切歌）
+        // 频谱 + 歌曲信息 区域（flex 弹性空间）
         Expanded(
           child: GestureDetector(
             onHorizontalDragEnd: (details) {
@@ -662,11 +665,11 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
             },
             child: Stack(
               children: [
+                // 频谱背景：完全填满
                 Positioned.fill(
-                  top: 120,
                   child: _buildFullSpectrumVisualizer(playing),
                 ),
-                // 顶部歌曲信息（渐变遮罩保证可读性）
+                // 歌曲信息：顶部叠加（IgnorePointer 不响应手势，让频谱手势穿透）
                 Positioned(
                   top: 0, left: 0, right: 0,
                   child: IgnorePointer(
@@ -677,9 +680,9 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
             ),
           ),
         ),
-        // KTV 歌词条（自适应高度：无歌词时塌缩为 0，上方 Expanded 频谱区自动吸收空间）
+        // KTV 歌词条
         const MiniKtvLyricBar(),
-        // 播放控制（自播放详情页移植：进度条 + 模式/上一首/播放暂停/下一首/队列）
+        // 播放控制
         _buildHomeControls(music, playing),
       ],
     );
