@@ -102,8 +102,6 @@ class _MyListScreenState extends ConsumerState<MyListScreen> {
             _buildSectionCard(
               title: '默认列表',
               children: [
-                _buildDefaultList('试听列表', 'default', Icons.queue_music_rounded,
-                    subtitle: '当前播放队列'),
                 _buildDefaultList('我喜欢', 'love', Icons.favorite_rounded,
                     subtitle: null),
                 _buildDefaultList('最近播放', 'recent', Icons.history_rounded,
@@ -395,9 +393,6 @@ class _MyListScreenState extends ConsumerState<MyListScreen> {
         break;
       case 'recent':
         context.push('/recent');
-        break;
-      case 'default':
-        // 试听列表 = 当前播放队列，跳播放详情（内含播放列表）
         break;
     }
   }

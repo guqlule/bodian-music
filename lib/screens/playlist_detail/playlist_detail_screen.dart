@@ -5,6 +5,7 @@ import '../../models/playlist_model.dart';
 import '../../providers/music_providers.dart';
 import '../../providers/app_providers.dart';
 import '../../core/theme/app_theme.dart';
+import '../../services/player/player_service.dart' show PlayMode;
 import '../../services/api/songlist_service.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
@@ -92,6 +93,11 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         title: Text(widget.playlistName),
         actions: [
           if (playlist != null && playlist.songs.isNotEmpty) ...[
+            IconButton(
+              icon: const Icon(Icons.shuffle_rounded),
+              onPressed: _shuffle,
+              tooltip: '随机播放',
+            ),
             IconButton(
               icon: const Icon(Icons.play_circle_filled),
               onPressed: _playAll,
@@ -367,6 +373,16 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     await playerService.setPlaylist(playlist.songs);
   }
 
+  void _shuffle() async {
+    final playlist = ref.read(playlistProvider.notifier).getPlaylist(widget.playlistId);
+    if (playlist == null || playlist.songs.isEmpty) return;
+
+    final playerService = ref.read(playerServiceProvider);
+    await playerService.setPlayMode(PlayMode.random);
+    await playerService.setPlaylist(playlist.songs);
+    await playerService.playMusic(playlist.songs.first);
+  }
+
   void _playSong(MusicInfo song) async {
     final playlist = ref.read(playlistProvider.notifier).getPlaylist(widget.playlistId);
     if (playlist == null) return;
@@ -439,6 +455,17 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
               onTap: () {
                 Navigator.pop(context);
                 _playSong(song);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.queue_music_outlined),
+              title: const Text('添加到播放队列'),
+              onTap: () {
+                Navigator.pop(context);
+                ref.read(playerServiceProvider).addToQueue(song);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('已添加到播放队列')),
+                );
               },
             ),
             ListTile(

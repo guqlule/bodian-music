@@ -38,6 +38,7 @@ final isLoadingProvider = _psStream<bool>((p) => p.isLoadingStream);
 final sleepTimerActiveProvider = _psStream<bool>((p) => p.isSleepTimerActiveStream);
 final sleepTimerRemainingProvider = _psStream<Duration?>((p) => p.sleepTimerRemainingStream);
 final lyricProvider = _psStream<Map<String, String?>?>((p) => p.lyricStream);
+final volumeProvider = _psStream<double>((p) => p.volumeStream);
 
 // Sync Service Providers
 final syncServiceProvider = Provider<SyncService>((ref) => SyncService());

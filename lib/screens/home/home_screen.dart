@@ -775,6 +775,8 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
                     _landscapeCtrlBtn(Icons.queue_music_rounded, () => showPlaylistSheet(context)),
                   ],
                 ),
+                // 音量滑块
+                const _VolumeSlider(),
               ],
             ),
           ),
@@ -929,6 +931,8 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
               ctrlBtn(Icons.queue_music_rounded, () => showPlaylistSheet(context), size: 42),
             ],
           ),
+          // 音量滑块
+          const _VolumeSlider(),
         ],
       ),
     );
@@ -1307,6 +1311,31 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
     );
   }
 
+}
+
+/// 音量滑块（竖屏/横屏通用）
+class _VolumeSlider extends ConsumerWidget {
+  const _VolumeSlider();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final volume = ref.watch(volumeProvider).valueOrNull ?? 1.0;
+    return SliderTheme(
+      data: SliderThemeData(
+        trackHeight: 3,
+        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+        overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+      ),
+      child: Slider(
+        value: volume,
+        min: 0,
+        max: 1,
+        activeColor: AppColors.primary,
+        inactiveColor: AppColors.divider,
+        onChanged: (v) => ref.read(playerServiceProvider).setVolume(v),
+      ),
+    );
+  }
 }
 
 /// 独立进度条 Widget —— 用 ref.listen 代替 ref.watch，

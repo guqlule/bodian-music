@@ -85,6 +85,7 @@ class PlayerService {
   Stream<bool> get isSleepTimerActiveStream => _isSleepTimerActiveController.stream;
   Stream<Duration?> get sleepTimerRemainingStream => _sleepTimerRemainingController.stream;
   Stream<Map<String, String?>?> get lyricStream => _lyricController.stream;
+  Stream<double> get volumeStream => _volumeController.stream;
 
   List<MusicInfo> get currentPlaylist => _playlistController.value;
   List<MusicInfo> get tempPlaylist => _tempPlaylistController.value;
@@ -112,6 +113,15 @@ class PlayerService {
   final PlayerStorage _storage = PlayerStorage();
   final LocalMusicService _localMusicService = LocalMusicService();
   final BehaviorSubject<String> _qualityController = BehaviorSubject<String>.seeded('');
+  final BehaviorSubject<double> _volumeController = BehaviorSubject<double>.seeded(1.0);
+
+  double get volume => _volumeController.value;
+
+  Future<void> setVolume(double v) async {
+    final clamped = v.clamp(0.0, 1.0);
+    _volumeController.add(clamped);
+    await _audioPlayer.setVolume(clamped);
+  }
 
   static const int _maxHistorySize = 100;
 
