@@ -144,13 +144,6 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
     // 有歌词时展开 5 行。避免固定槽位占 188px 空白导致页面很空。
     if (_lyrics.isEmpty) return const SizedBox.shrink();
 
-    final estPos = _playing
-        ? _basePos + DateTime.now().difference(_basePosTime)
-        : _basePos;
-    final idx = _findIndex(estPos);
-    if (idx < 0) return const SizedBox.shrink();
-    final progress = _progress(idx, estPos);
-
     return GestureDetector(
       onTap: () => _showLargeLyric(context),
       child: Container(
@@ -158,7 +151,18 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
         margin: const EdgeInsets.fromLTRB(24, 4, 24, 8),
         child: AnimatedBuilder(
           animation: _tickerListenable,
+          // 关键：estPos/idx/progress 必须放在 builder 内，
+          // 否则 ticker 触发的重建会复用旧的 idx 和 progress，歌词就不会动。
+          // 之前 build() 只在 setState 时调用，AnimatedBuilder.builder
+          // 内部用的闭包变量是 build() 时的快照。
           builder: (context, _) {
+            final estPos = _playing
+                ? _basePos + DateTime.now().difference(_basePosTime)
+                : _basePos;
+            final idx = _findIndex(estPos);
+            if (idx < 0) return const SizedBox.shrink();
+            final progress = _progress(idx, estPos);
+
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: List.generate(_visibleLines, (slot) {
