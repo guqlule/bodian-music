@@ -677,7 +677,8 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
             ),
           ),
         ),
-        // KTV 歌词条
+        // KTV 歌词条（固定高度槽位：无歌词时塌缩为 0，有歌词时展开，
+        // 避免歌词到达/切歌时高度突变把进度条+控制按钮挤出屏幕）
         const MiniKtvLyricBar(),
         // 播放控制（自播放详情页移植：进度条 + 模式/上一首/播放暂停/下一首/队列）
         _buildHomeControls(music, playing),

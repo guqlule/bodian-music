@@ -140,22 +140,27 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
     if (_lyricKey.isEmpty) {
       _tryParseLyric(ref.read(lyricProvider).valueOrNull);
     }
-    if (_lyrics.isEmpty) return const SizedBox.shrink();
+    // 固定槽位：歌词在到达前就预留高度，避免歌词出现/消失时布局高度突变，
+    // 把下方进度条与控制按钮挤出屏幕（歌词为空/idx<0 时渲染透明占位）
+    final estPos = _playing
+        ? _basePos + DateTime.now().difference(_basePosTime)
+        : _basePos;
+    final idx = _lyrics.isEmpty ? -1 : _findIndex(estPos);
+    final progress = (idx >= 0 && _lyrics.isNotEmpty) ? _progress(idx, estPos) : 0.0;
 
     return GestureDetector(
-      onTap: () => _showLargeLyric(context),
+      onTap: () {
+        if (_lyrics.isNotEmpty) _showLargeLyric(context);
+      },
       child: Container(
         height: _visibleLines * _lineHeight,
         margin: const EdgeInsets.fromLTRB(24, 4, 24, 8),
         child: AnimatedBuilder(
           animation: _tickerListenable,
           builder: (context, _) {
-            final estPos = _playing
-                ? _basePos + DateTime.now().difference(_basePosTime)
-                : _basePos;
-            final idx = _findIndex(estPos);
-            if (idx < 0) return const SizedBox.shrink();
-            final progress = _progress(idx, estPos);
+            if (_lyrics.isEmpty || idx < 0) {
+              return const SizedBox.shrink();
+            }
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: List.generate(_visibleLines, (slot) {
