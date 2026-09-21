@@ -76,6 +76,7 @@ class AudioVisualizer extends StatefulWidget {
   final VisualizerEffect effect;
   final Stream<SpectrumData> spectrumStream;
   final bool playing;
+  final bool loading;
   final VoidCallback? onNativeStale;
 
   /// 原生数据是否"活着"（有帧且非全零）。
@@ -88,6 +89,7 @@ class AudioVisualizer extends StatefulWidget {
     this.effect = VisualizerEffect.bars,
     required this.spectrumStream,
     required this.playing,
+    this.loading = false,
     this.onNativeStale,
     this.isDataAlive,
   });
@@ -178,15 +180,44 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
         _staleNotified = false;
         if (staleMs > 1500) _lastNativeData = DateTime.now().subtract(const Duration(milliseconds: 100));
       }
+    } else if (widget.loading) {
+      // 加载中（playing=false, loading=true）：保持模拟频谱，显示轻柔脉动
+      if (!_simActive) {
+        _simActive = true;
+        _staleNotified = false;
+      }
+      _updateSimLoading();
     } else {
-      // 未播放时清空模拟，确保下次播放重新触发
+      // 未播放且未加载时清空模拟
       _simActive = false;
       _staleNotified = false;
       _simFreqs = [];
     }
     // 始终触发重绘（_frame 改变后 painter 才能读到新的 simPhase）
-    // 之前只在 _dirty=true 时通知，导致无频谱数据时画面冻结
     _repaint.notifyListeners();
+  }
+
+  /// 加载中模拟：比正常模拟更柔和，振幅更低
+  void _updateSimLoading() {
+    final t = _frame * 0.03; // 更慢的节奏
+    final vol = 0.3 + 0.15 * sin(t * 0.7); // 更低的振幅
+    if (_simFreqs.isEmpty) _simFreqs = List<double>.filled(64, 0);
+    for (int i = 0; i < _simFreqs.length; i++) {
+      final fi = i / _simFreqs.length;
+      final low = sin(fi * 2.5 + t) * 0.5 + 0.5;
+      final mid = sin(fi * 8 + t * 1.3) * 0.5 + 0.5;
+      final v = (low * 0.7 + mid * 0.3) * vol;
+      _simFreqs[i] = _simFreqs[i] * 0.7 + v.clamp(0.0, 1.0) * 0.3;
+    }
+    final bass = _simFreqs[2] + _simFreqs[3] * 0.5;
+    _spectrum = SpectrumData(
+      frequencies: _simFreqs,
+      bass: bass.clamp(0.0, 1.0),
+      mid: _simFreqs[20],
+      treble: _simFreqs[50],
+      volume: vol * 0.4,
+      beat: 0,
+    );
   }
 
   void _updateSim() {
@@ -217,7 +248,9 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
   @override
   void didUpdateWidget(covariant AudioVisualizer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.playing != widget.playing) _syncTimer();
+    if (oldWidget.playing != widget.playing || oldWidget.loading != widget.loading) {
+      _syncTimer();
+    }
   }
 
   @override

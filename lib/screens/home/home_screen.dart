@@ -649,6 +649,7 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
     // 关键：每个非 Expanded 子项必须显式占用固定高度，
     // 否则 flex 子项 Expanded 会撑满剩余空间，把下方的控件挤出屏幕。
     // 之前的 KTV 高度跳变曾反复踩坑（见 6282da1/039d23c）。
+    final isLoading = ref.watch(isLoadingProvider).valueOrNull ?? false;
     return Column(
       children: [
         _buildTopBar(),
@@ -667,7 +668,7 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
               children: [
                 // 频谱背景：完全填满
                 Positioned.fill(
-                  child: _buildFullSpectrumVisualizer(playing),
+                  child: _buildFullSpectrumVisualizer(playing, isLoading: isLoading),
                 ),
                 // 歌曲信息：顶部叠加（IgnorePointer 不响应手势，让频谱手势穿透）
                 Positioned(
@@ -805,7 +806,7 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
                 Positioned.fill(
                   child: Opacity(
                     opacity: 0.1,
-                    child: _buildFullSpectrumVisualizer(playing),
+                    child: _buildFullSpectrumVisualizer(playing, isLoading: isLoading),
                   ),
                 ),
                 // 顶部歌曲信息（渐变遮罩）
@@ -1028,9 +1029,9 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
   }
 
   // 全屏频谱动画
-  Widget _buildFullSpectrumVisualizer(bool playing) {
+  Widget _buildFullSpectrumVisualizer(bool playing, {bool isLoading = false}) {
     final audioAnalysis = ref.read(audioAnalysisProvider);
-    // 缓存的可视化器：effect 变化才创建新实例，playing 变化通过 didUpdateWidget 生效
+    // 缓存的可视化器：effect 变化才创建新实例，playing/loading 变化通过 didUpdateWidget 生效
     final cached = _cachedVisualizer;
     final shouldCreate = cached is! AudioVisualizer || cached.effect != _currentEffect;
     if (shouldCreate) {
@@ -1040,6 +1041,7 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
         effect: _currentEffect,
         spectrumStream: audioAnalysis.spectrumStream,
         playing: playing,
+        loading: isLoading,
         onNativeStale: _onVizNativeStale,
         isDataAlive: () => audioAnalysis.isCapturing &&
             audioAnalysis.lastFftMax > 0.004,
