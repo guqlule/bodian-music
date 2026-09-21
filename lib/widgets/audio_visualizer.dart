@@ -7,8 +7,8 @@ import '../services/audio/audio_analysis_service.dart';
 
 enum VisualizerEffect {
   bars('频谱'),
-  wave('波浪'),
-  circle('圆环'),
+  terrain('地形'),
+  pulse('脉冲'),
   radial('放射'),
   mirror('镜像'),
   line('线条'),
@@ -246,10 +246,10 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
     switch (widget.effect) {
       case VisualizerEffect.bars:
         return CustomPaint(painter: _BarsPainter(state: this, count: min(widget.barCount, 64), repaint: _repaint));
-      case VisualizerEffect.wave:
-        return CustomPaint(painter: _WavePainter(state: this, repaint: _repaint));
-      case VisualizerEffect.circle:
-        return CustomPaint(painter: _CirclePainter(state: this, repaint: _repaint));
+      case VisualizerEffect.terrain:
+        return CustomPaint(painter: _TerrainPainter(state: this, repaint: _repaint));
+      case VisualizerEffect.pulse:
+        return CustomPaint(painter: _PulsePainter(state: this, repaint: _repaint));
       case VisualizerEffect.radial:
         return CustomPaint(painter: _RadialPainter(state: this, repaint: _repaint));
       case VisualizerEffect.mirror:
@@ -407,132 +407,139 @@ class _BarsPainter extends CustomPainter {
   bool shouldRepaint(covariant _BarsPainter old) => true;
 }
 
-// ==================== 波浪（平滑流动风格）====================
+// ==================== 地形（多层山脉起伏）====================
 
-final Paint _waveFillPaint = Paint()..style = PaintingStyle.fill;
-final Paint _waveStrokePaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
-final Path _wavePath = Path();
-final Path _waveFillPath = Path();
+final Paint _terrainFillPaint = Paint()..style = PaintingStyle.fill;
+final Paint _terrainStrokePaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
 
-class _WavePainter extends CustomPainter {
+class _TerrainPainter extends CustomPainter {
   final _AudioVisualizerState state;
-  _WavePainter({required this.state, required super.repaint});
+  _TerrainPainter({required this.state, required super.repaint});
 
   @override
   void paint(Canvas canvas, Size size) {
     _paintBg(canvas, size, state._spectrum.volume);
     final w = size.width;
     final h = size.height;
-    final bass = state._spectrum.bass;
+    final freqs = state._spectrum.frequencies;
     final vol = state._spectrum.volume;
-    final t = state._frame * 0.025 + bass * 0.8;
+    final t = state._frame * 0.018;
 
-    for (int layer = 0; layer < 4; layer++) {
-      final path = _wavePath..reset();
-      final yBase = h * (0.30 + layer * 0.15);
-      final baseAmp = h * 0.10 * (1 - layer * 0.10);
-      final amp = baseAmp * (0.4 + vol * 0.6);
-      final tColor = _freqColor(layer, 4, 0.28 - layer * 0.03);
+    for (int layer = 0; layer < 3; layer++) {
+      final yBase = h * (0.50 + layer * 0.12);
+      final amplitude = h * (0.18 - layer * 0.04) * (0.3 + vol * 0.7);
+      final speed = 1.0 + layer * 0.3;
 
-      path.moveTo(0, yBase);
-      for (double x = 0; x <= w; x += 6) {
+      final ridgePath = Path();
+      ridgePath.moveTo(0, yBase);
+      for (double x = 0; x <= w; x += 4) {
         final p = x / w;
-        final y = yBase +
-            sin(p * 3.0 * pi + t * (0.8 + layer * 0.15) + layer * 1.2) * amp * 0.7 +
-            sin(p * 1.8 * pi + t * 0.4 + layer * 0.6) * amp * 0.3;
-        path.lineTo(x, y);
+        double mountain;
+        if (freqs.isEmpty) {
+          mountain = sin(p * 2.5 * pi + t * speed + layer * 1.8) * 0.5
+              + sin(p * 4.2 * pi + t * speed * 0.7 + layer * 0.9) * 0.3
+              + sin(p * 7.1 * pi - t * speed * 0.4 + layer * 2.5) * 0.2;
+        } else {
+          final fi = (p * (freqs.length - 1)).round().clamp(0, freqs.length - 1);
+          final fv = freqs[fi];
+          final baseWave = sin(p * 2.5 * pi + t * speed + layer * 1.8) * 0.4;
+          mountain = baseWave + fv * 0.6;
+        }
+        ridgePath.lineTo(x, yBase - mountain * amplitude);
       }
 
-      _waveFillPath
-        ..reset()
-        ..addPath(path, Offset.zero)
+      final fillPath = Path()
+        ..addPath(ridgePath, Offset.zero)
         ..lineTo(w, h)
         ..lineTo(0, h)
         ..close();
-      _waveFillPaint.shader = ui.Gradient.linear(
-        Offset(0, yBase - amp), Offset(0, h),
-        [tColor, tColor.withValues(alpha: 0)],
+
+      final color = _freqColor(layer, 3, 0.35 - layer * 0.08 + vol * 0.1);
+      _terrainFillPaint.shader = ui.Gradient.linear(
+        Offset(0, yBase - amplitude), Offset(0, yBase + 20),
+        [color, color.withValues(alpha: 0)],
       );
-      canvas.drawPath(_waveFillPath, _waveFillPaint);
-      _waveStrokePaint
-        ..color = tColor.withValues(alpha: 0.65)
-        ..strokeWidth = 2.0 - layer * 0.15;
-      canvas.drawPath(path, _waveStrokePaint);
+      canvas.drawPath(fillPath, _terrainFillPaint);
+
+      _terrainStrokePaint
+        ..color = _freqColor(layer, 3, 0.5 - layer * 0.1)
+        ..strokeWidth = 1.5 - layer * 0.3;
+      canvas.drawPath(ridgePath, _terrainStrokePaint);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _WavePainter old) => true;
+  bool shouldRepaint(covariant _TerrainPainter old) => true;
 }
 
-// ==================== 圆环 ====================
+// ==================== 脉冲（节拍驱动同心圆环）====================
 
-final Paint _circleInnerGlowPaint = Paint()..style = PaintingStyle.fill;
-final Paint _circleRayPaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
-final Paint _circleRayGlowPaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round
-  ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+final Paint _pulseRingPaint = Paint()..style = PaintingStyle.stroke;
+final Paint _pulseGlowPaint = Paint()..style = PaintingStyle.fill;
+final Paint _pulseCorePaint = Paint()..style = PaintingStyle.fill;
 
-class _CirclePainter extends CustomPainter {
+class _PulsePainter extends CustomPainter {
   final _AudioVisualizerState state;
-  _CirclePainter({required this.state, required super.repaint});
+  _PulsePainter({required this.state, required super.repaint});
 
   @override
   void paint(Canvas canvas, Size size) {
     _paintBg(canvas, size, state._spectrum.volume);
-    final values = state._spectrum.frequencies;
-    if (values.isEmpty) return;
     final center = Offset(size.width / 2, size.height * 0.50);
-    final baseRadius = min(size.width, size.height) * 0.38;
-    final rotation = state._frame * 0.015;
-    final beatFlash = state._spectrum.beat;
+    final maxR = min(size.width, size.height) * 0.42;
+    final freqs = state._spectrum.frequencies;
+    final bass = state._spectrum.bass;
+    final beat = state._spectrum.beat;
+    final vol = state._spectrum.volume;
+    final t = state._frame * 0.02;
 
-    _circleInnerGlowPaint.shader = ui.Gradient.radial(
-      center, baseRadius * 0.6,
-      [AppColors.primaryDark.withValues(alpha: 0.15 + state._spectrum.bass * 0.1), AppColors.primaryDark.withValues(alpha: 0)],
+    final coreR = 8 + bass * 14;
+    _pulseGlowPaint.shader = ui.Gradient.radial(
+      center, coreR * 3,
+      [AppColors.primaryDark.withValues(alpha: 0.2 + bass * 0.15), AppColors.primaryDark.withValues(alpha: 0)],
     );
-    canvas.drawCircle(center, baseRadius * 0.6, _circleInnerGlowPaint);
+    canvas.drawCircle(center, coreR * 3, _pulseGlowPaint);
+    _pulseCorePaint.color = AppColors.primaryDark.withValues(alpha: 0.7 + beat * 0.3);
+    canvas.drawCircle(center, coreR, _pulseCorePaint);
+    canvas.drawCircle(center, coreR * 0.45, _pFill(Colors.white.withValues(alpha: 0.6)));
 
-    final count = min(values.length, 64);
-    for (int i = 0; i < count; i++) {
-      final angle = (2 * pi / count) * i - pi / 2 + rotation;
-      final v = values[i];
-      final innerR = baseRadius * 0.42;
-      final outerR = innerR + (baseRadius * 0.7) * v;
-      final color = _freqColor(i, count, 0.4 + v * 0.6);
+    for (int i = 0; i < 8; i++) {
+      final freqIdx = (i * (freqs.length - 1) / 7).round().clamp(0, max(0, freqs.length - 1)) as int;
+      final fv = freqs.isNotEmpty ? freqs[freqIdx] : 0.0;
+      final breathe = 0.5 + 0.5 * sin(t * 0.6 + i * 0.8);
+      final r = maxR * (0.12 + i * 0.10 + fv * 0.06 + breathe * 0.03 + beat * 0.02);
+      final alpha = (0.55 - i * 0.05).clamp(0.15, 1.0);
+      final color = _freqColor(i, 8, alpha);
+      final strokeW = max(1.0, 2.5 - i * 0.2 + fv * 1.5);
 
-      _circleRayGlowPaint
-        ..color = color.withValues(alpha: 0.4)
-        ..strokeWidth = 3.5;
-      canvas.drawLine(
-        center + Offset(cos(angle), sin(angle)) * innerR,
-        center + Offset(cos(angle), sin(angle)) * outerR,
-        _circleRayGlowPaint,
-      );
-      _circleRayPaint
+      _pulseGlowPaint.color = color.withValues(alpha: 0.12);
+      canvas.drawCircle(center, r, _pulseGlowPaint);
+      _pulseRingPaint
         ..color = color
-        ..strokeWidth = 2.2;
-      canvas.drawLine(
-        center + Offset(cos(angle), sin(angle)) * innerR,
-        center + Offset(cos(angle), sin(angle)) * outerR,
-        _circleRayPaint,
-      );
-      if (v > 0.3) {
-        final tip = center + Offset(cos(angle), sin(angle)) * outerR;
-        canvas.drawCircle(tip, 1.0 + v * 1.2, _pFill(color.withValues(alpha: 0.9)));
-      }
+        ..strokeWidth = strokeW;
+      canvas.drawCircle(center, r, _pulseRingPaint);
     }
 
-    final outerR = baseRadius * 1.2 + beatFlash * baseRadius * 0.1;
-    canvas.drawCircle(center, outerR, _pStroke(AppColors.primaryDark.withValues(alpha: 0.4 + beatFlash * 0.3), 2.2));
-    canvas.drawCircle(center, baseRadius * 0.38, _pStroke(AppColors.primaryDark.withValues(alpha: 0.25), 1.5));
-
-    final coreR = 5 + state._spectrum.bass * 10;
-    canvas.drawCircle(center, coreR + 3, _pGlow(AppColors.primaryDark.withValues(alpha: 0.4), 8));
-    canvas.drawCircle(center, coreR, _pFill(AppColors.primaryDark.withValues(alpha: 0.85)));
+    for (int i = 0; i < 60; i++) {
+      final angle = (2 * pi / 60) * i + t * 0.1;
+      final fi = (i * (freqs.length - 1) / 59).round().clamp(0, max(0, freqs.length - 1)) as int;
+      final fv = freqs.isNotEmpty ? freqs[fi] : 0.0;
+      final innerR = maxR * 0.92;
+      final outerR = innerR + maxR * 0.08 * fv;
+      final color = _freqColor(i, 60, 0.2 + fv * 0.5);
+      _pulseRingPaint
+        ..color = color
+        ..strokeWidth = 1.2;
+      canvas.drawLine(
+        center + Offset(cos(angle), sin(angle)) * innerR,
+        center + Offset(cos(angle), sin(angle)) * outerR,
+        _pulseRingPaint,
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _CirclePainter old) => true;
+  bool shouldRepaint(covariant _PulsePainter old) => true;
 }
 
 // ==================== 放射（圆形频谱柱体）====================

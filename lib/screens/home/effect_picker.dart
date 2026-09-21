@@ -7,10 +7,10 @@ IconData effectIconFor(VisualizerEffect effect) {
   switch (effect) {
     case VisualizerEffect.bars:
       return Icons.equalizer_rounded;
-    case VisualizerEffect.wave:
-      return Icons.waves_rounded;
-    case VisualizerEffect.circle:
-      return Icons.donut_large_rounded;
+    case VisualizerEffect.terrain:
+      return Icons.terrain_rounded;
+    case VisualizerEffect.pulse:
+      return Icons.radio_button_on_rounded;
     case VisualizerEffect.radial:
       return Icons.radar_rounded;
     case VisualizerEffect.mirror:
