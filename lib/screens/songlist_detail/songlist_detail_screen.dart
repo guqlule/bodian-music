@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/music_model.dart';
 import '../../models/playlist_model.dart';
 import '../../providers/app_providers.dart';
 import '../../services/api/songlist_service.dart';
+import '../../services/api/music_search_service.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/logger.dart';
 
 class SonglistDetailScreen extends ConsumerStatefulWidget {
   final String songlistId;
@@ -47,8 +50,13 @@ class _SonglistDetailScreenState extends ConsumerState<SonglistDetailScreen> {
       );
 
       if (result != null && mounted) {
+        var songs = result.songs;
+        // TX 歌单：按歌名+歌手搜索其他音源替换（kw/kg/wy 可播放）
+        if (widget.source == 'tx' && songs.isNotEmpty) {
+          songs = await _replaceWithOtherSource(songs);
+        }
         setState(() {
-          _songs = result.songs;
+          _songs = songs;
           _title = result.name.isNotEmpty ? result.name : _title;
           _imgUrl = result.imgUrl.isNotEmpty ? result.imgUrl : _imgUrl;
           _isLoading = false;
@@ -59,6 +67,77 @@ class _SonglistDetailScreenState extends ConsumerState<SonglistDetailScreen> {
     } catch (e) {
       if (mounted) setState(() { _isLoading = false; _error = e.toString(); });
     }
+  }
+
+  /// 将 TX 歌曲列表替换为其他音源（kw/kg/wy）的匹配结果。
+  /// 每首歌并行搜索 kw/kg/wy，取第一个匹配项替换。
+  /// 搜索失败或无匹配时保留原 TX 歌曲。
+  Future<List<MusicInfo>> _replaceWithOtherSource(List<MusicInfo> txSongs) async {
+    final searchService = MusicSearchService();
+    const sources = ['kw', 'kg', 'wy'];
+
+    // 并行搜索所有歌曲（每首歌最多 3 个源并发）
+    final futures = txSongs.map((txSong) async {
+      try {
+        final keyword = '${txSong.name} ${txSong.singer}'.trim();
+        if (keyword.isEmpty) return txSong;
+
+        // 三个源并行搜索，取第一个有结果的
+        final results = await Future.wait(
+          sources.map((src) async {
+            try {
+              final result = await searchService.search(
+                keyword: keyword,
+                source: src,
+                page: 1,
+                pageSize: 3,
+              );
+              return result.list;
+            } catch (_) {
+              return <MusicInfo>[];
+            }
+          }),
+        );
+
+        // 从所有结果中找最佳匹配（歌名+歌手完全匹配优先）
+        for (final list in results) {
+          for (final candidate in list) {
+            if (_isSongMatch(txSong, candidate)) {
+              logDebug('[TX歌单换源] ${txSong.name} -> ${candidate.name} (${candidate.source})');
+              return candidate;
+            }
+          }
+        }
+        // 无精确匹配，取第一个结果（模糊匹配）
+        for (final list in results) {
+          if (list.isNotEmpty) {
+            logDebug('[TX歌单换源] ${txSong.name} -> ${list.first.name} (${list.first.source}) [模糊]');
+            return list.first;
+          }
+        }
+      } catch (e) {
+        logDebug('[TX歌单换源] 搜索失败: ${txSong.name} - $e');
+      }
+      return txSong; // 失败时保留原 TX 歌曲
+    });
+
+    return Future.wait(futures);
+  }
+
+  /// 判断两首歌是否为同一首（歌名+歌手模糊匹配）
+  bool _isSongMatch(MusicInfo a, MusicInfo b) {
+    final nameA = a.name.toLowerCase().replaceAll(RegExp(r'[\s\-_（）()【】\[\]]'), '');
+    final nameB = b.name.toLowerCase().replaceAll(RegExp(r'[\s\-_（）()【】\[\]]'), '');
+    if (nameA.isEmpty || nameB.isEmpty) return false;
+    // 歌名完全匹配或互相包含
+    final nameOk = nameA == nameB || nameA.contains(nameB) || nameB.contains(nameA);
+    if (!nameOk) return false;
+
+    // 歌手匹配：取第一个歌手名比较
+    final singerA = a.singer.split(RegExp(r'[、/,]')).first.toLowerCase().trim();
+    final singerB = b.singer.split(RegExp(r'[、/,]')).first.toLowerCase().trim();
+    if (singerA.isEmpty || singerB.isEmpty) return true; // 无歌手信息时只看歌名
+    return singerA == singerB || singerA.contains(singerB) || singerB.contains(singerA);
   }
 
   String get _favSonglistId => 'fav_${widget.source}_${widget.songlistId}';

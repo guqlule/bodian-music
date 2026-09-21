@@ -5,8 +5,10 @@ import '../../models/playlist_model.dart';
 import '../../providers/music_providers.dart';
 import '../../providers/app_providers.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/logger.dart';
 import '../../services/player/player_service.dart' show PlayMode;
 import '../../services/api/songlist_service.dart';
+import '../../services/api/music_search_service.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
   final String playlistId;
@@ -66,11 +68,16 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     if (!mounted) return;
 
     if (detail != null && detail.songs.isNotEmpty) {
+      var songs = detail.songs;
+      // TX 导入歌单：搜索其他音源替换（kw/kg/wy 可播放）
+      if (source == 'tx' && songs.isNotEmpty) {
+        songs = await _replaceWithOtherSource(songs);
+      }
       final updated = ref.read(playlistProvider.notifier).getPlaylist(widget.playlistId);
       if (updated != null) {
         updated.songs
           ..clear()
-          ..addAll(detail.songs);
+          ..addAll(songs);
         updated.updateTime = DateTime.now();
         ref.read(playlistProvider.notifier).updatePlaylist(updated);
       }
@@ -82,6 +89,67 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         _importError = hasSongs ? null : '歌曲拉取失败，请检查网络后重试';
       });
     }
+  }
+
+  Future<List<MusicInfo>> _replaceWithOtherSource(List<MusicInfo> txSongs) async {
+    final searchService = MusicSearchService();
+    const sources = ['kw', 'kg', 'wy'];
+
+    final futures = txSongs.map((txSong) async {
+      try {
+        final keyword = '${txSong.name} ${txSong.singer}'.trim();
+        if (keyword.isEmpty) return txSong;
+
+        final results = await Future.wait(
+          sources.map((src) async {
+            try {
+              final result = await searchService.search(
+                keyword: keyword,
+                source: src,
+                page: 1,
+                pageSize: 3,
+              );
+              return result.list;
+            } catch (_) {
+              return <MusicInfo>[];
+            }
+          }),
+        );
+
+        for (final list in results) {
+          for (final candidate in list) {
+            if (_isSongMatch(txSong, candidate)) {
+              logDebug('[TX导入换源] ${txSong.name} -> ${candidate.name} (${candidate.source})');
+              return candidate;
+            }
+          }
+        }
+        for (final list in results) {
+          if (list.isNotEmpty) {
+            logDebug('[TX导入换源] ${txSong.name} -> ${list.first.name} (${list.first.source}) [模糊]');
+            return list.first;
+          }
+        }
+      } catch (e) {
+        logDebug('[TX导入换源] 搜索失败: ${txSong.name} - $e');
+      }
+      return txSong;
+    });
+
+    return Future.wait(futures);
+  }
+
+  bool _isSongMatch(MusicInfo a, MusicInfo b) {
+    final nameA = a.name.toLowerCase().replaceAll(RegExp(r'[\s\-_（）()【】\[\]]'), '');
+    final nameB = b.name.toLowerCase().replaceAll(RegExp(r'[\s\-_（）()【】\[\]]'), '');
+    if (nameA.isEmpty || nameB.isEmpty) return false;
+    final nameOk = nameA == nameB || nameA.contains(nameB) || nameB.contains(nameA);
+    if (!nameOk) return false;
+
+    final singerA = a.singer.split(RegExp(r'[、/,]')).first.toLowerCase().trim();
+    final singerB = b.singer.split(RegExp(r'[、/,]')).first.toLowerCase().trim();
+    if (singerA.isEmpty || singerB.isEmpty) return true;
+    return singerA == singerB || singerA.contains(singerB) || singerB.contains(singerA);
   }
 
   @override
