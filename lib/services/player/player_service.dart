@@ -904,6 +904,13 @@ class PlayerService {
         _playlistController.add(newPlaylist);
       }
 
+      // 再次检查请求是否已被取消（必须在 currentMusicController.add 之前，
+      // 否则并发 playMusic 会导致旧歌短暂覆盖新歌的 UI 显示）
+      if (_isStaleLoad(requestId)) {
+        debugPrint('[Player] STALE at 836, requestId=$requestId current=$_loadRequestId');
+        return;
+      }
+
       _currentMusicController.add(musicWithUrl);
       _currentIndexController.add(index >= 0 ? index : _playlistController.value.length - 1);
 
@@ -1030,8 +1037,8 @@ class PlayerService {
 
   /// 异步获取歌词
   Future<void> _fetchLyric(MusicInfo music) async {
+    final lrId = _lyricRequestId;
     try {
-      final lrId = _lyricRequestId;
 
       // 本地歌曲：先读同名 .lrc 文件，无则在线搜索兜底
       if (music.source == 'local') {
@@ -1053,11 +1060,11 @@ class PlayerService {
               _lyricController.add(onlineLyric);
             } else {
               logDebug('[Lyric] 本地歌曲在线搜索无结果');
-              _lyricController.add(null);
+              if (!_isStaleLyric(lrId)) _lyricController.add(null);
             }
           } catch (e) {
             logDebug('[Lyric] 本地歌曲在线歌词失败: $e');
-            _lyricController.add(null);
+            if (!_isStaleLyric(lrId)) _lyricController.add(null);
           }
         }
         return;
@@ -1098,10 +1105,11 @@ class PlayerService {
         }
       }
 
-      _lyricController.add(lyricData);
+      // 所有源均无歌词 → 写入 null 标记（但先检查是否过期，避免覆盖新歌歌词）
+      if (!_isStaleLyric(lrId)) _lyricController.add(lyricData);
     } catch (e) {
       logDebug('[Lyric] 获取歌词失败: $e');
-      _lyricController.add(null);
+      if (!_isStaleLyric(lrId)) _lyricController.add(null);
     }
   }
 
