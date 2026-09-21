@@ -887,8 +887,8 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 6),
       child: Column(
         children: [
-          // 紧凑进度条（临时占位，排查布局问题）
-          const SizedBox(height: 12),
+          // 紧凑进度条
+          const _HomeProgressBar(),
           const SizedBox(height: 4),
           // 控制按钮排
           Row(
@@ -1430,108 +1430,96 @@ class CustomSliderProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Flutter Slider 几何（对齐 slider_parts.dart / slider.dart）：
-    // 覆盖 overlay 为 RoundSliderOverlayShape(overlayRadius: thumbR)，
-    // 让左右 inset 都 = thumbR（对称），轨道 Y 中心 = (48 - trackH)/2。
-    // 缓冲段用同样的 inset 与 Y 中心绘制，即与 Slider 轨道像素级对齐。
-    const sliderHeight = 48.0;
-    final inset = thumbR; // 对称缩进（overlayRadius = thumbR）
-    final trackCenterY = (sliderHeight - trackH) / 2;
-
     final activeRatio = maxMs > 0 ? (activeMs / maxMs).clamp(0.0, 1.0) : 0.0;
     final bufferedRatio = maxMs > 0 ? (bufferedMs / maxMs).clamp(0.0, 1.0) : 0.0;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        // 两层都用 Positioned.fill 占满 Stack，像素级对齐
-        return Stack(
-          children: [
-            // 中层：已缓冲段（浅主色）
+    // 简化为单层结构：Slider 自身负责 active 段 + thumb 渲染，
+    // 缓冲段用一个独立的 SizedBox + CustomPaint 叠加在下方。
+    // 之前用 Stack + Positioned.fill + 嵌套 SizedBox 的方案在 dur=null 时
+    // 触发布局异常导致整个首页 Column 子树不渲染（首页只剩顶部菜单栏）。
+    return SizedBox(
+      height: 48,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // 缓冲段：用 Padding 缩进 + 自定义绘制，与 Slider 轨道对齐
+          if (bufferedRatio > activeRatio)
             Positioned.fill(
-              child: CustomPaint(
-                painter: _BufferedBarPainter(
-                  activeRatio: activeRatio,
-                  bufferedRatio: bufferedRatio,
-                  inset: inset,
-                  trackH: trackH,
-                  trackCenterY: trackCenterY,
-                  color: AppColors.primary.withValues(alpha: 0.28),
-                ),
-              ),
-            ),
-            // 顶层：Slider（active 段 + 拖动 thumb + 交互）
-            Positioned.fill(
-              child: SizedBox(
-                height: sliderHeight,
-                width: width,
-                child: SliderTheme(
-                  data: SliderThemeData(
-                    activeTrackColor: AppColors.primary,
-                    inactiveTrackColor: AppColors.divider,
-                    thumbColor: AppColors.card,
-                    thumbShape: RoundSliderThumbShape(enabledThumbRadius: thumbR, elevation: 2),
-                    overlayShape: RoundSliderOverlayShape(overlayRadius: thumbR),
-                    trackHeight: trackH,
-                    overlayColor: AppColors.primarySoftColor,
-                  ),
-                  child: Slider(
-                    value: activeMs,
-                    max: maxMs,
-                    onChanged: onChanged,
-                    onChangeEnd: onRelease,
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: thumbR),
+                child: CustomPaint(
+                  painter: _BufferedBarPainter(
+                    activeRatio: activeRatio,
+                    bufferedRatio: bufferedRatio,
+                    trackH: trackH,
+                    color: AppColors.primary.withValues(alpha: 0.28),
                   ),
                 ),
               ),
             ),
-            // 最顶层：双击定位 seek
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onDoubleTapDown: (details) {
-                  final ratio = ((details.localPosition.dx - inset) / (width - inset * 2)).clamp(0.0, 1.0);
-                  onRelease((ratio * maxMs).roundToDouble());
-                },
-              ),
+          // Slider
+          SliderTheme(
+            data: SliderThemeData(
+              activeTrackColor: AppColors.primary,
+              inactiveTrackColor: AppColors.divider,
+              thumbColor: AppColors.card,
+              thumbShape: RoundSliderThumbShape(enabledThumbRadius: thumbR, elevation: 2),
+              overlayShape: RoundSliderOverlayShape(overlayRadius: thumbR),
+              trackHeight: trackH,
+              overlayColor: AppColors.primarySoftColor,
             ),
-          ],
-        );
-      },
+            child: Slider(
+              value: activeMs.clamp(0.0, maxMs),
+              max: maxMs,
+              onChanged: onChanged,
+              onChangeEnd: onRelease,
+            ),
+          ),
+          // 双击定位 seek（覆盖整个 Slider 区域）
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onDoubleTapDown: (details) {
+                final width = (context.findRenderObject() as RenderBox?)?.size.width ?? 0;
+                if (width <= 0) return;
+                final usableW = (width - thumbR * 2).clamp(1.0, double.infinity);
+                final ratio = ((details.localPosition.dx - thumbR) / usableW).clamp(0.0, 1.0);
+                onRelease((ratio * maxMs).roundToDouble());
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-/// 在底层 track 之上、Slider 之下，画一条"已缓冲"浅色进度段。
-/// 只画 active 末端到 buffered 末端之间的增量（active 本身由 Slider 画）。
+/// 缓冲段 painter：在 active 末端到 buffered 末端之间画一段浅色进度条。
 class _BufferedBarPainter extends CustomPainter {
   final double activeRatio;
   final double bufferedRatio;
-  final double inset; // 轨道左右缩进（与 Slider 的 max(overlay,thumb) 对齐）
   final double trackH;
-  final double trackCenterY;
   final Color color;
 
   _BufferedBarPainter({
     required this.activeRatio,
     required this.bufferedRatio,
-    required this.inset,
     required this.trackH,
-    required this.trackCenterY,
     required this.color,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (bufferedRatio <= activeRatio) return; // 没有增量缓冲可画
-    // 与 Slider 轨道相同的水平范围（左右各缩进 inset）
-    final usableW = (size.width - inset * 2).clamp(0.0, size.width);
-    final startX = inset + usableW * activeRatio;
-    final endX = inset + usableW * bufferedRatio;
+    if (bufferedRatio <= activeRatio) return;
+    final usableW = size.width;
+    final centerY = size.height / 2;
+    final startX = usableW * activeRatio;
+    final endX = usableW * bufferedRatio;
     final rect = Rect.fromLTRB(
       startX,
-      trackCenterY - trackH / 2,
+      centerY - trackH / 2,
       endX,
-      trackCenterY + trackH / 2,
+      centerY + trackH / 2,
     );
     final paint = Paint()..color = color;
     canvas.drawRRect(RRect.fromRectAndRadius(rect, Radius.circular(trackH / 2)), paint);
@@ -1542,8 +1530,6 @@ class _BufferedBarPainter extends CustomPainter {
       old.activeRatio != activeRatio ||
       old.bufferedRatio != bufferedRatio ||
       old.color != color ||
-      old.inset != inset ||
-      old.trackH != trackH ||
-      old.trackCenterY != trackCenterY;
+      old.trackH != trackH;
 }
 
