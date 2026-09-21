@@ -13,6 +13,14 @@ IconData effectIconFor(VisualizerEffect effect) {
       return Icons.donut_large_rounded;
     case VisualizerEffect.radial:
       return Icons.radar_rounded;
+    case VisualizerEffect.mirror:
+      return Icons.swap_vert_rounded;
+    case VisualizerEffect.line:
+      return Icons.show_chart_rounded;
+    case VisualizerEffect.dot:
+      return Icons.grid_on_rounded;
+    case VisualizerEffect.spiral:
+      return Icons.autorenew_rounded;
   }
 }
 

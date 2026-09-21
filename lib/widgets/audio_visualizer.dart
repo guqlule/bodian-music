@@ -9,7 +9,11 @@ enum VisualizerEffect {
   bars('频谱'),
   wave('波浪'),
   circle('圆环'),
-  radial('放射');
+  radial('放射'),
+  mirror('镜像'),
+  line('线条'),
+  dot('点阵'),
+  spiral('螺旋');
 
   final String label;
   const VisualizerEffect(this.label);
@@ -248,6 +252,14 @@ class _AudioVisualizerState extends State<AudioVisualizer> {
         return CustomPaint(painter: _CirclePainter(state: this, repaint: _repaint));
       case VisualizerEffect.radial:
         return CustomPaint(painter: _RadialPainter(state: this, repaint: _repaint));
+      case VisualizerEffect.mirror:
+        return CustomPaint(painter: _MirrorPainter(state: this, count: min(widget.barCount, 64), repaint: _repaint));
+      case VisualizerEffect.line:
+        return CustomPaint(painter: _LinePainter(state: this, repaint: _repaint));
+      case VisualizerEffect.dot:
+        return CustomPaint(painter: _DotPainter(state: this, repaint: _repaint));
+      case VisualizerEffect.spiral:
+        return CustomPaint(painter: _SpiralPainter(state: this, repaint: _repaint));
     }
   }
 }
@@ -587,4 +599,293 @@ class _RadialPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RadialPainter old) => true;
+}
+
+// ==================== 镜像（对称频谱柱体）====================
+
+final Paint _mirrorBarPaint = Paint()..style = PaintingStyle.fill;
+final Paint _mirrorGlowPaint = Paint()..style = PaintingStyle.fill;
+
+class _MirrorPainter extends CustomPainter {
+  final _AudioVisualizerState state;
+  final int count;
+  _MirrorPainter({required this.state, required this.count, required super.repaint});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    _paintBg(canvas, size, state._spectrum.volume);
+    final w = size.width;
+    final h = size.height;
+    final freqs = state._spectrum.frequencies;
+    final cy = h * 0.50;
+    final vol = state._spectrum.volume;
+    final maxBarH = h * 0.40;
+
+    final useSim = freqs.isEmpty;
+    final simPhase = state._frame * 0.06;
+
+    final gap = w / (count + 1);
+    final barW = gap * 0.50;
+    final startX = gap;
+
+    for (int i = 0; i < count; i++) {
+      int fi = 0;
+      double value;
+      if (useSim) {
+        final ti = i / (count - 1);
+        value = (0.3 + 0.5 * sin(ti * 5 + simPhase) + 0.2 * sin(ti * 11 - simPhase * 1.5))
+            .clamp(0.1, 1.0);
+      } else {
+        fi = (i * freqs.length / count).floor().clamp(0, freqs.length - 1);
+        value = freqs[fi];
+      }
+      final x = startX + i * gap;
+      final barH = max(1.5, maxBarH * value);
+
+      final t = i / max(1, count - 1);
+      final color = _freqColor(i, count, 0.5 + value * 0.5);
+
+      // 上半柱体
+      final topRect = Rect.fromLTWH(x, cy - barH, barW, barH);
+      _mirrorBarPaint.shader = ui.Gradient.linear(
+        Offset(0, cy), Offset(0, cy - barH),
+        [color.withValues(alpha: 0.3), color],
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndCorners(topRect, topLeft: Radius.circular(barW / 3), topRight: Radius.circular(barW / 3)),
+        _mirrorBarPaint,
+      );
+      // 下半镜像
+      final botRect = Rect.fromLTWH(x, cy + 2, barW, barH);
+      _mirrorBarPaint.shader = ui.Gradient.linear(
+        Offset(0, cy + 2), Offset(0, cy + 2 + barH),
+        [color, color.withValues(alpha: 0.15)],
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndCorners(botRect, bottomLeft: Radius.circular(barW / 3), bottomRight: Radius.circular(barW / 3)),
+        _mirrorBarPaint,
+      );
+      // 辉光
+      if (value > 0.5) {
+        _mirrorGlowPaint.color = color.withValues(alpha: (value - 0.5) * 0.15);
+        canvas.drawRect(Rect.fromLTWH(x - 2, cy - barH - 2, barW + 4, barH * 2 + 6), _mirrorGlowPaint);
+      }
+    }
+
+    // 中线
+    canvas.drawLine(Offset(w * 0.04, cy), Offset(w * 0.96, cy),
+        _pStroke(AppColors.primaryDark.withValues(alpha: 0.15), 0.8));
+  }
+
+  @override
+  bool shouldRepaint(covariant _MirrorPainter old) => true;
+}
+
+// ==================== 线条（连续波形线）====================
+
+final Paint _lineWavePaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
+final Paint _lineGlowPaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
+final Path _linePath = Path();
+final Path _lineFillPath = Path();
+
+class _LinePainter extends CustomPainter {
+  final _AudioVisualizerState state;
+  _LinePainter({required this.state, required super.repaint});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    _paintBg(canvas, size, state._spectrum.volume);
+    final w = size.width;
+    final h = size.height;
+    final freqs = state._spectrum.frequencies;
+    final cy = h * 0.50;
+    final vol = state._spectrum.volume;
+    final t = state._frame * 0.03;
+
+    // 绘制两条线：主线 + 影子线
+    for (int pass = 0; pass < 2; pass++) {
+      final path = _linePath..reset();
+      final amplitude = h * 0.30 * (0.3 + vol * 0.7);
+      final yBase = cy + (pass == 1 ? 8 : 0);
+
+      path.moveTo(0, yBase);
+      for (double x = 0; x <= w; x += 3) {
+        final p = x / w;
+        double y;
+        if (freqs.isEmpty) {
+          // 模拟：柔和正弦波
+          y = yBase + sin(p * 4 * pi + t * 1.2) * amplitude * 0.3 * (pass == 0 ? 1.0 : 0.6);
+        } else {
+          // 用频率数据驱动波形
+          final fi = (p * (freqs.length - 1)).round().clamp(0, freqs.length - 1);
+          final v = freqs[fi];
+          final wave = sin(p * 3 * pi + t) * amplitude * 0.3;
+          final freq = v * amplitude * 0.7;
+          y = yBase + wave + (p < 0.5 ? -freq : freq);
+        }
+        path.lineTo(x, y);
+      }
+
+      if (pass == 0) {
+        // 主线：渐变色
+        _lineWavePaint
+          ..color = _freqColor(0, 1, 0.7)
+          ..strokeWidth = 2.5;
+        // 辉光
+        _lineGlowPaint
+          ..color = _freqColor(0, 1, 0.2)
+          ..strokeWidth = 8;
+        canvas.drawPath(path, _lineGlowPaint);
+        canvas.drawPath(path, _lineWavePaint);
+      } else {
+        // 影子线：更淡
+        _lineWavePaint
+          ..color = _freqColor(2, 4, 0.25)
+          ..strokeWidth = 1.2;
+        canvas.drawPath(path, _lineWavePaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _LinePainter old) => true;
+}
+
+// ==================== 点阵（网格脉动）====================
+
+final Paint _dotPaint = Paint()..style = PaintingStyle.fill;
+
+class _DotPainter extends CustomPainter {
+  final _AudioVisualizerState state;
+  _DotPainter({required this.state, required super.repaint});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    _paintBg(canvas, size, state._spectrum.volume);
+    final w = size.width;
+    final h = size.height;
+    final freqs = state._spectrum.frequencies;
+    final vol = state._spectrum.volume;
+    final t = state._frame * 0.04;
+
+    const cols = 16;
+    const rows = 24;
+    final dotSpacingX = w / (cols + 1);
+    final dotSpacingY = h / (rows + 1);
+    final maxRadius = min(dotSpacingX, dotSpacingY) * 0.35;
+
+    for (int row = 0; row < rows; row++) {
+      for (int col = 0; col < cols; col++) {
+        final cx = dotSpacingX * (col + 1);
+        final cy = dotSpacingY * (row + 1);
+        final nx = col / (cols - 1);
+        final ny = row / (rows - 1);
+
+        double intensity;
+        if (freqs.isEmpty) {
+          // 模拟：圆形扩散波
+          final dist = sqrt((nx - 0.5) * (nx - 0.5) + (ny - 0.5) * (ny - 0.5));
+          final wave = sin(dist * 12 - t * 2) * 0.5 + 0.5;
+          intensity = wave * vol * 0.8;
+        } else {
+          // 用频率数据驱动：行→频段，列→位置衰减
+          final fi = (ny * (freqs.length - 1)).round().clamp(0, freqs.length - 1);
+          final fv = freqs[fi];
+          final edgeFade = 1.0 - (nx - 0.5).abs() * 1.2;
+          intensity = fv * edgeFade.clamp(0.0, 1.0);
+        }
+
+        final radius = max(0.8, maxRadius * (0.15 + intensity * 0.85));
+        final alpha = (0.2 + intensity * 0.8).clamp(0.0, 1.0);
+        final color = _freqColor(col + row, cols + rows, alpha);
+
+        // 外晕
+        if (intensity > 0.3) {
+          _dotPaint.color = color.withValues(alpha: alpha * 0.1);
+          canvas.drawCircle(Offset(cx, cy), radius * 2.5, _dotPaint);
+        }
+        // 实心点
+        _dotPaint.color = color;
+        canvas.drawCircle(Offset(cx, cy), radius, _dotPaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DotPainter old) => true;
+}
+
+// ==================== 螺旋（旋转频率螺旋）====================
+
+final Paint _spiralLinePaint = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
+
+class _SpiralPainter extends CustomPainter {
+  final _AudioVisualizerState state;
+  _SpiralPainter({required this.state, required super.repaint});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    _paintBg(canvas, size, state._spectrum.volume);
+    final w = size.width;
+    final h = size.height;
+    final cx = w * 0.5;
+    final cy = h * 0.50;
+    final freqs = state._spectrum.frequencies;
+    final vol = state._spectrum.volume;
+    final bass = state._spectrum.bass;
+    final t = state._frame * 0.015;
+    final maxR = min(w, h) * 0.42;
+
+    // 绘制 3 条螺旋线（相位偏移 120°）
+    for (int arm = 0; arm < 3; arm++) {
+      final armOffset = arm * 2 * pi / 3;
+      final points = <Offset>[];
+
+      for (double a = 0; a < 4 * pi; a += 0.08) {
+        final progress = a / (4 * pi); // 0→1 从中心到外围
+        final radius = maxR * 0.15 + maxR * 0.80 * progress;
+
+        double freqVal;
+        if (freqs.isEmpty) {
+          freqVal = (sin(a * 2 + t * 3 + arm) * 0.5 + 0.5) * vol * 0.7;
+        } else {
+          final fi = (progress * (freqs.length - 1)).round().clamp(0, freqs.length - 1);
+          freqVal = freqs[fi];
+        }
+
+        final wobble = freqVal * maxR * 0.08 * sin(a * 6 + t * 4 + arm);
+        final angle = a + t + armOffset;
+        final r = radius + wobble;
+        points.add(Offset(cx + cos(angle) * r, cy + sin(angle) * r));
+      }
+
+      if (points.length < 2) continue;
+
+      // 绘制螺旋线
+      final alpha = 0.45 + vol * 0.35;
+      final color = _freqColor(arm, 3, alpha);
+      _spiralLinePaint
+        ..color = color
+        ..strokeWidth = 1.8 + bass * 1.2;
+      final path = Path()..moveTo(points[0].dx, points[0].dy);
+      for (int i = 1; i < points.length; i++) {
+        path.lineTo(points[i].dx, points[i].dy);
+      }
+      canvas.drawPath(path, _spiralLinePaint);
+
+      // 辉光
+      _spiralLinePaint
+        ..color = color.withValues(alpha: 0.15)
+        ..strokeWidth = 5.0;
+      canvas.drawPath(path, _spiralLinePaint);
+    }
+
+    // 中心点
+    final coreR = 3 + bass * 6;
+    canvas.drawCircle(Offset(cx, cy), coreR + 3, _pGlow(AppColors.primaryDark.withValues(alpha: 0.25), 5));
+    canvas.drawCircle(Offset(cx, cy), coreR, _pFill(AppColors.primaryDark.withValues(alpha: 0.6)));
+  }
+
+  @override
+  bool shouldRepaint(covariant _SpiralPainter old) => true;
 }
