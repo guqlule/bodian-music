@@ -887,8 +887,8 @@ class _PlayerHomeViewState extends ConsumerState<PlayerHomeView>
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 6),
       child: Column(
         children: [
-          // 紧凑进度条
-          const _HomeProgressBar(),
+          // 紧凑进度条（临时占位，排查布局问题）
+          const SizedBox(height: 12),
           const SizedBox(height: 4),
           // 控制按钮排
           Row(
