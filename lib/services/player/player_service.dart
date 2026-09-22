@@ -138,12 +138,11 @@ class PlayerService {
           (_durationController.value != null && position >= _durationController.value!)) {
         _positionController.add(position);
       }
-      // 节流：歌词同步 + MediaSession 同步限频至每1秒一次
+      // 歌词同步 + MediaSession 同步限频至每 300ms 一次（车机蓝牙需要更频繁的 metadata 更新才能实现歌词滚动效果）
       final now = DateTime.now();
-      if (now.difference(_lastMediaSync).inMilliseconds >= 1000) {
+      if (now.difference(_lastMediaSync).inMilliseconds >= 300) {
         _lastMediaSync = now;
         _updateMediaLyric(position);
-        _mediaHandler?.syncPlaybackState();
       }
     }));
 

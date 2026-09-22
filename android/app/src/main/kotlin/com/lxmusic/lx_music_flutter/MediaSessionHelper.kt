@@ -61,6 +61,13 @@ class MediaSessionHelper {
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
 
+            // 部分国产车机（尤其是支持"蓝牙歌词"的车机）读取自定义 LYRICS 字段显示歌词。
+            // 使用标准 key "android.media.metadata.LYRICS"，该 key 在 MediaMetadataCompat 中
+            // 未定义常量但底层 Bundle 支持任意字符串 key。
+            if (lyric.isNotEmpty()) {
+                builder.putString("android.media.metadata.LYRICS", lyric)
+            }
+
             // 只在 durationMs 提供且有效时更新，否则保留 existing 的 duration
             if (durationMs != null && durationMs > 0) {
                 builder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
