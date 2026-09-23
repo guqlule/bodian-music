@@ -21,9 +21,15 @@ class MediaSessionHelper {
     /** 通过反射一次性拿到 audio_service.AudioService.instance.mediaSession */
     private fun resolveSession(): MediaSessionCompat? = runCatching {
         val cls = Class.forName("com.ryanheise.audioservice.AudioService")
-        val instance = cls.getField("instance").get(null) as? android.app.Service
+        // getField 只能访问 public 字段，而 instance 是包私有、mediaSession 是 private
+        // 必须用 getDeclaredField + setAccessible
+        val instanceField = cls.getDeclaredField("instance")
+        instanceField.isAccessible = true
+        val instance = instanceField.get(null) as? android.app.Service
             ?: return@runCatching null
-        cls.getField("mediaSession").get(instance) as? MediaSessionCompat
+        val sessionField = cls.getDeclaredField("mediaSession")
+        sessionField.isAccessible = true
+        sessionField.get(instance) as? MediaSessionCompat
     }.getOrNull()
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
@@ -57,6 +63,7 @@ class MediaSessionHelper {
     private fun handleUpdateLyric(call: MethodCall, result: MethodChannel.Result) {
         val session = cachedSession ?: resolveSession().also { cachedSession = it }
         if (session == null) {
+            android.util.Log.w("MediaSessionHelper", "resolveSession failed, cannot update lyric")
             result.success(false)
             return
         }
