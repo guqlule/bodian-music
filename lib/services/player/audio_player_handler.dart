@@ -153,7 +153,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         displayTitle: hasLine ? line : (cur.displayTitle ?? cur.title),
         displaySubtitle: cur.artist ?? '',
         displayDescription: hasLine ? line : (cur.album ?? ''),
-        extras: {'lyric': line ?? ''},
+        extras: {
+          'lyric': line ?? '',
+          'lyrics': line ?? '',
+          'android.media.metadata.LYRICS': line ?? '',
+        },
       );
       mediaItem.add(_currentItem);
 
@@ -165,6 +169,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           lyric: text,
           durationMs: (dur ?? cur.duration)?.inMilliseconds,
         );
+        // 同时写入 PlaybackState extras（Jovi InCar 可能从这里读歌词）
+        MediaSessionService().setPlaybackStateLyric(text);
       });
 
       // 车机蓝牙只在 PlaybackState 变化时才重新读取 metadata（androidx/media #430）。
@@ -185,6 +191,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         album: m.album,
         artUri: _buildArtUri(m),
         duration: m.duration > 0 ? Duration(milliseconds: m.duration) : null,
+        // Jovi InCar 可能从队列项的 MediaDescription extras 读歌词
+        extras: {'lyric': '', 'lyrics': ''},
       )).toList();
       queue.add(items);
       if (currentIndex >= 0 && currentIndex < playlist.length) {
@@ -199,6 +207,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           displayTitle: m.name,
           displaySubtitle: '',
           displayDescription: m.album,
+          extras: {'lyric': '', 'lyrics': ''},
         );
         _currentItem = item;
         // 重置歌词去重标记：syncQueueToSystem 把 title 改回歌名了，

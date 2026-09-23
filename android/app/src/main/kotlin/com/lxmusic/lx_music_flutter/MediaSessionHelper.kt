@@ -36,7 +36,36 @@ class MediaSessionHelper {
         when (call.method) {
             "updateLyric" -> handleUpdateLyric(call, result)
             "clearLyric" -> handleClearLyric(result)
+            "setPlaybackStateLyric" -> handleSetPlaybackStateLyric(call, result)
             else -> result.notImplemented()
+        }
+    }
+
+    /** 将歌词写入 PlaybackState extras（Jovi InCar 可能从这里读） */
+    private fun handleSetPlaybackStateLyric(call: MethodCall, result: MethodChannel.Result) {
+        val session = cachedSession ?: resolveSession().also { cachedSession = it }
+        if (session == null) {
+            result.success(false)
+            return
+        }
+        try {
+            val lyric = call.argument<String>("lyric") ?: ""
+            val existing = session.controller?.playbackState
+            if (existing != null) {
+                val bundle = android.os.Bundle(existing.extras ?: android.os.Bundle()).apply {
+                    putString("lyric", lyric)
+                    putString("lyrics", lyric)
+                    putString("android.media.metadata.LYRICS", lyric)
+                }
+                session.setPlaybackState(
+                    android.support.v4.media.session.PlaybackStateCompat.Builder(existing)
+                        .setExtras(bundle)
+                        .build()
+                )
+            }
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("MEDIA_ERROR", e.message, null)
         }
     }
 
@@ -110,12 +139,10 @@ class MediaSessionHelper {
             }
 
             val meta = builder.build()
-            session.setMetadata(meta)
 
-            // Jovi InCar 音乐卡片通过 MediaSession.getExtras() 读取歌词显示，
-            // 而非 MediaMetadata 的 TITLE/DISPLAY_DESCRIPTION 字段。
-            // audio_service 不会调用 setExtras()，所以这里手动写入。
-            // 同时写入多个 key 覆盖不同版本的读取逻辑。
+            // 先写 extras 再写 metadata：
+            // Jovi InCar 可能在 onMetadataChanged 回调里读取 getExtras()，
+            // 如果先 setMetadata 后 setExtras，Jovi 读到的还是旧 extras。
             val extras = android.os.Bundle().apply {
                 putString("lyric", lyric)
                 putString("lyrics", lyric)
@@ -123,6 +150,8 @@ class MediaSessionHelper {
                 putString("displayDescription", lyric)
             }
             session.setExtras(extras)
+
+            session.setMetadata(meta)
 
             result.success(true)
         } catch (e: Exception) {

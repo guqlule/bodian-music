@@ -41,4 +41,16 @@ class MediaSessionService {
       return false;
     }
   }
+
+  /// 将歌词写入 PlaybackState extras（Jovi InCar 可能从这里读）
+  Future<bool> setPlaybackStateLyric(String lyric) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('setPlaybackStateLyric', {
+        'lyric': lyric,
+      });
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 }
