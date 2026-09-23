@@ -166,6 +166,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           durationMs: (dur ?? cur.duration)?.inMilliseconds,
         );
       });
+
+      // 车机蓝牙只在 PlaybackState 变化时才重新读取 metadata（androidx/media #430）。
+      // mediaId 保持不变（避免车机判定"快速切歌"），所以每行歌词推送时
+      // 主动触发一次 position+1ms 的 PlaybackState 更新，强制车机重读 title。
+      if (hasLine) {
+        _broadcastState(positionOffset: 1);
+      }
     } catch (_) {}
   }
 
@@ -194,6 +201,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           displayDescription: m.album,
         );
         _currentItem = item;
+        // 重置歌词去重标记：syncQueueToSystem 把 title 改回歌名了，
+        // 必须允许下一次 updateLyricLine 重新推送当前歌词行
+        _lastLyricText = null;
         mediaItem.add(item);
       }
     } catch (_) {}
