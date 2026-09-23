@@ -84,6 +84,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     }
     _baseMediaId = music.id;
     _lastLyricText = null;
+    // 切歌时清空 session extras 歌词，避免旧歌歌词在 Jovi InCar 卡片残留
+    unawaited(MediaSessionService().clearLyric());
     try {
       final subtitle = '${music.singer} · ${music.album}';
       Uri? artUri;

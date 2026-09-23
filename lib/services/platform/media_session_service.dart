@@ -31,4 +31,14 @@ class MediaSessionService {
       return false;
     }
   }
+
+  /// 切歌时清空歌词 extras，避免旧歌歌词残留
+  Future<bool> clearLyric() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('clearLyric');
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 }

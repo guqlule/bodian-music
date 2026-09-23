@@ -27,10 +27,34 @@ class MediaSessionHelper {
     }.getOrNull()
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
-        if (call.method != "updateLyric") {
-            result.notImplemented()
+        when (call.method) {
+            "updateLyric" -> handleUpdateLyric(call, result)
+            "clearLyric" -> handleClearLyric(result)
+            else -> result.notImplemented()
+        }
+    }
+
+    /** 切歌时清空歌词 extras，避免旧歌歌词残留 */
+    private fun handleClearLyric(result: MethodChannel.Result) {
+        val session = cachedSession ?: resolveSession().also { cachedSession = it }
+        if (session == null) {
+            result.success(false)
             return
         }
+        try {
+            session.setExtras(android.os.Bundle().apply {
+                putString("lyric", "")
+                putString("lyrics", "")
+                putString("android.media.metadata.LYRICS", "")
+                putString("displayDescription", "")
+            })
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("MEDIA_ERROR", e.message, null)
+        }
+    }
+
+    private fun handleUpdateLyric(call: MethodCall, result: MethodChannel.Result) {
         val session = cachedSession ?: resolveSession().also { cachedSession = it }
         if (session == null) {
             result.success(false)
@@ -80,6 +104,19 @@ class MediaSessionHelper {
 
             val meta = builder.build()
             session.setMetadata(meta)
+
+            // Jovi InCar 音乐卡片通过 MediaSession.getExtras() 读取歌词显示，
+            // 而非 MediaMetadata 的 TITLE/DISPLAY_DESCRIPTION 字段。
+            // audio_service 不会调用 setExtras()，所以这里手动写入。
+            // 同时写入多个 key 覆盖不同版本的读取逻辑。
+            val extras = android.os.Bundle().apply {
+                putString("lyric", lyric)
+                putString("lyrics", lyric)
+                putString("android.media.metadata.LYRICS", lyric)
+                putString("displayDescription", lyric)
+            }
+            session.setExtras(extras)
+
             result.success(true)
         } catch (e: Exception) {
             result.error("MEDIA_ERROR", e.message, null)
