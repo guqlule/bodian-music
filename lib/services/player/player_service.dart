@@ -127,6 +127,8 @@ class PlayerService {
 
   DateTime _lastMediaSync = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastPlayCallTime = DateTime.fromMillisecondsSinceEpoch(0);
+  // idle(404) 换源防重入：一首歌只尝试一次换源，失败后跳下一首
+  bool _idleAltSourceAttempted = false;
 
   void _init() {
     _subscriptions.add(_audioPlayer.positionStream.listen((position) {
@@ -184,10 +186,25 @@ class PlayerService {
           // play() 后 2 秒内的 idle 不算异常（player 状态切换有延迟）
           final sinceLastPlay = DateTime.now().difference(_lastPlayCallTime).inMilliseconds;
           if (sinceLastPlay < 2000) return;
-          // ExoPlayer 因源错误(404)回退到 idle → 自动跳下一首
-          logDebug('[Player] 感知到异常 idle（距上次play ${sinceLastPlay}ms），自动跳下一首');
-          _statusTextController.add('');
-          playNext(isAutoToggle: true);
+          final music = _currentMusicController.value;
+          if (music != null &&
+              music.source != 'local' &&
+              music.source != 'webdav' &&
+              !_idleAltSourceAttempted) {
+            // ExoPlayer 因源错误(404)回退到 idle → 先尝试换源
+            logDebug('[Player] 感知到异常 idle（距上次play ${sinceLastPlay}ms），尝试换源');
+            _idleAltSourceAttempted = true;
+            _isLoadingController.add(true);
+            _statusTextController.add('${music.source} 源失效，尝试其他源...');
+            _loadRequestId++;
+            final requestId = _loadRequestId;
+            _tryAlternativeSource(music, requestId);
+          } else {
+            // 换源已尝试过仍失败 → 跳下一首
+            logDebug('[Player] 感知到异常 idle，换源已尝试过，跳下一首');
+            _statusTextController.add('');
+            playNext(isAutoToggle: true);
+          }
         }
       }
     }));
@@ -803,6 +820,7 @@ class PlayerService {
 
     _statusTextController.add(hasCachedUrl ? '加载中...' : '获取链接中...');
     _retryCount = 0;
+    _idleAltSourceAttempted = false;
     // 切歌时保留上一首歌词，直到新歌词到达或确认无歌词才清空。
     // 避免切歌瞬间歌词页闪烁成「暂无歌词」。
     // （旧歌词属于上一首歌曲，新歌开始后位置重新计算，
@@ -998,15 +1016,10 @@ class PlayerService {
         return;
       }
 
-      // 脚本明确错误：全局错误（IP封禁/限流/签名失败）重试无意义直接提示；
-      // 单歌错误（如转链失败）值得跨源换源恢复
+      // 脚本明确错误：单歌错误（转链失败等）和全局错误都尝试换源
+      // 换源用不同源的脚本/接口，当前源的封禁/限流不一定影响其他源
       if (e is MusicUrlException) {
-        if (!e.retryable) {
-          _isLoadingController.add(false);
-          _statusTextController.add('获取失败: $e');
-          return;
-        }
-        _statusTextController.add('${music.source} 源转链失败，尝试其他源...');
+        _statusTextController.add('${music.source} 源获取失败，尝试其他源...');
         await _tryAlternativeSource(music, requestId);
         return;
       }
@@ -1249,6 +1262,12 @@ class PlayerService {
         _statusTextController.add(supportedSources.isEmpty
             ? '未注册任何音源，请在自定义源页面激活脚本'
             : '仅支持 ${supportedSources.join(", ")}，无法切换到其他源');
+        // 无法换源 → 5 秒后跳下一首
+        if (_loadRequestId == requestId) {
+          Timer(const Duration(seconds: 5), () {
+            if (_loadRequestId == requestId) playNext(isAutoToggle: true);
+          });
+        }
         return;
       }
 
@@ -1261,6 +1280,12 @@ class PlayerService {
         _isLoadingController.add(false);
         _statusTextController.add('其他源未找到匹配歌曲');
         logDebug('[AltSource] 备选候选为空');
+        // 无候选 → 5 秒后跳下一首
+        if (_loadRequestId == requestId) {
+          Timer(const Duration(seconds: 5), () {
+            if (_loadRequestId == requestId) playNext(isAutoToggle: true);
+          });
+        }
         return;
       }
 
@@ -1301,9 +1326,28 @@ class PlayerService {
         final alternativeWithUrl = altMusic.copyWith(songUrl: altUrl);
         final playlist = _playlistController.value;
         final index = playlist.indexWhere((m) => m.id == music.id);
-        if (index < 0) {
+        if (index >= 0) {
+          // 替换队列中的原曲条目，保持索引一致
+          final newPlaylist = List<MusicInfo>.from(playlist);
+          newPlaylist[index] = alternativeWithUrl;
+          _playlistController.add(newPlaylist);
+          _currentIndexController.add(index);
+        } else {
           final newPlaylist = List<MusicInfo>.from(playlist)..add(alternativeWithUrl);
           _playlistController.add(newPlaylist);
+          _currentIndexController.add(newPlaylist.length - 1);
+        }
+
+        // 随机模式：将新歌加入已播放列表
+        if (playMode == PlayMode.random) {
+          _addToPlayedList(alternativeWithUrl);
+        }
+
+        // 从稍后播放列表中移除
+        final tempPlaylist = _tempPlaylistController.value;
+        if (tempPlaylist.isNotEmpty && tempPlaylist.first.id == music.id) {
+          final newTemp = List<MusicInfo>.from(tempPlaylist)..removeAt(0);
+          _tempPlaylistController.add(newTemp);
         }
 
         _currentMusicController.add(alternativeWithUrl);
@@ -1317,10 +1361,13 @@ class PlayerService {
 
         _addToHistory(alternativeWithUrl);
         _putUrlCache(alternativeWithUrl.id, altUrl);
+        _putUrlCache(music.id, altUrl); // 同时缓存到原曲 id，重播原曲时直接命中
         _qualityController.add(_urlService.lastUsedQuality ?? '');
         _isLoadingController.add(false);
         _statusTextController.add('');
+        _idleAltSourceAttempted = false; // 新歌获得自己的换源机会
         _fetchLyricParallel(alternativeWithUrl);
+        _prefetchNextUrl(alternativeWithUrl);
         return;
       }
 
@@ -1331,10 +1378,26 @@ class PlayerService {
         _statusTextController.add('所有源均无法播放');
       }
       logDebug('[AltSource] 所有备选源均无法获取播放地址');
+      // 所有源都失败 → 5 秒后自动跳下一首（对齐原版行为）
+      // 只有当请求仍然有效（用户没有手动切歌）才跳
+      if (_loadRequestId == requestId) {
+        Timer(const Duration(seconds: 5), () {
+          if (_loadRequestId == requestId) {
+            logDebug('[AltSource] 换源失败，5秒后跳下一首');
+            playNext(isAutoToggle: true);
+          }
+        });
+      }
     } catch (e) {
       if (_loadRequestId == requestId) {
         _isLoadingController.add(false);
         _statusTextController.add('播放失败');
+        // 换源异常 → 5 秒后跳下一首
+        Timer(const Duration(seconds: 5), () {
+          if (_loadRequestId == requestId) {
+            playNext(isAutoToggle: true);
+          }
+        });
       }
     }
   }
@@ -1342,9 +1405,22 @@ class PlayerService {
   void _startLoadTimeout() {
     _cancelLoadTimeout();
     _loadTimeoutTimer = Timer(_loadTimeout, () {
-      if (_currentMusicController.value != null) {
-        _statusTextController.add('加载超时');
-        playNext(isAutoToggle: true);
+      final music = _currentMusicController.value;
+      if (music != null) {
+        // 加载超时 → 先尝试换源（备选已预热），换源也失败才跳下一首
+        if (music.source != 'local' &&
+            music.source != 'webdav' &&
+            !_idleAltSourceAttempted) {
+          logDebug('[Player] 加载超时，尝试换源: ${music.name}');
+          _idleAltSourceAttempted = true;
+          _statusTextController.add('加载超时，尝试其他源...');
+          _loadRequestId++;
+          final requestId = _loadRequestId;
+          _tryAlternativeSource(music, requestId);
+        } else {
+          _statusTextController.add('加载超时');
+          playNext(isAutoToggle: true);
+        }
       }
     });
   }
