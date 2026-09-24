@@ -528,6 +528,18 @@ class PlayerService {
         nextMusic = playlist[nextIndex];
         break;
       case PlayMode.random:
+        // 预加载的下一首优先复用（避免 random.nextInt 两次结果不同，
+        // 导致预加载的歌和实际播放的歌不一致 → 歌词错位）
+        if (_prefetchedNextMusic != null) {
+          final prefetched = _prefetchedNextMusic!;
+          _prefetchedNextMusic = null;
+          // 确认预加载的歌仍在队列中且未播放过
+          if (playlist.any((m) => m.id == prefetched.id) &&
+              !playedList.any((m) => m.id == prefetched.id)) {
+            nextMusic = prefetched;
+            break;
+          }
+        }
         // 随机模式：优先从已播放列表回退
         if (playedList.isNotEmpty) {
           final currentId = currentMusic?.id;
@@ -777,12 +789,18 @@ class PlayerService {
 
   /// 后台预取下一首的播放地址（切歌时命中缓存秒开）
   /// 走并行通道（临时 JS 运行时），不与用户切歌争抢 JS 锁
+  MusicInfo? _prefetchedNextMusic;
+
   void _prefetchNextUrl(MusicInfo current) {
     // 「无缝播放」开关关闭时不预取（之前标志位从未被检查，设置形同虚设）
     if (!_prefetchEnabled) return;
     final next = _getNextPlayMusicInfo(isManualToggle: false);
     if (next == null || next.source == 'local' || next.source == 'webdav') return;
     if (_urlCache.containsKey(next.id)) return;
+    // 记录预加载的歌曲：随机模式下 _getNextPlayMusicInfo 每次调用
+    // 都会重新 random.nextInt()，导致预加载的歌和实际播放的歌不一致。
+    // 存下来让 playNext 复用同一首。
+    _prefetchedNextMusic = next;
     // 延迟2秒执行，避开主播放请求的高峰
     Future.delayed(const Duration(seconds: 2), () async {
       try {

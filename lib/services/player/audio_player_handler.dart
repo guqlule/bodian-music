@@ -58,16 +58,36 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   }
 
   /// 古早车机蓝牙只在 playbackState position 变化时才刷新显示。
+  /// 同时每 500ms 重写一次 LYRICS key：
+  /// audio_service 的 setMediaItem 会用 createMediaMetadata 重建整个
+  /// metadata bundle（不含 LYRICS key），把 MethodChannel 写入的歌词抹掉。
+  /// 定期重写确保车机读到的 LYRICS 始终是当前行。
   void _updatePosRefreshTimer() {
     if (_player.playing && _btLyricCached) {
       _posRefreshTimer ??= Timer.periodic(
         const Duration(milliseconds: 500),
-        (_) => _broadcastState(),
+        (_) {
+          _broadcastState();
+          _rewriteLyricsMetadata();
+        },
       );
     } else {
       _posRefreshTimer?.cancel();
       _posRefreshTimer = null;
     }
+  }
+
+  /// 重写 LYRICS key（不改 title，避免闪歌名）
+  void _rewriteLyricsMetadata() {
+    final line = _lastLyricText;
+    if (line == null || line.isEmpty) return;
+    unawaited(MediaSessionService().updateLyric(
+      title: line,
+      artist: _currentItem?.artist ?? '',
+      album: _currentItem?.album ?? '',
+      lyric: line,
+      durationMs: (_player.duration ?? _currentItem?.duration)?.inMilliseconds,
+    ));
   }
 
   void cancelPlaybackSubscription() {
@@ -197,6 +217,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       queue.add(items);
       if (currentIndex >= 0 && currentIndex < playlist.length) {
         final m = playlist[currentIndex];
+        // 同一首歌：不要覆盖 _currentItem 的歌词 title/extras，
+        // 否则队列同步会把歌词抹回歌名，车机显示歌名而非歌词行
+        if (_currentItem?.id == m.id) {
+          return;
+        }
         final item = MediaItem(
           id: m.id,
           title: m.name,
@@ -210,8 +235,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           extras: {'lyric': '', 'lyrics': ''},
         );
         _currentItem = item;
-        // 重置歌词去重标记：syncQueueToSystem 把 title 改回歌名了，
-        // 必须允许下一次 updateLyricLine 重新推送当前歌词行
         _lastLyricText = null;
         mediaItem.add(item);
       }
