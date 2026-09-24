@@ -105,6 +105,10 @@ class AboutScreen extends StatelessWidget {
                   subtitle: Text('报告 Bug 或提出建议', style: TextStyle(color: AppColors.textSecondary)),
                   contentPadding: EdgeInsets.zero,
                   trailing: Icon(Icons.chevron_right_rounded, color: AppColors.textHint),
+                  onTap: () => launchUrl(
+                    Uri.parse('https://github.com/guqlule/bodian-music/issues'),
+                    mode: LaunchMode.externalApplication,
+                  ),
                 ),
                 ListTile(
                   leading: Icon(Icons.privacy_tip_rounded, color: AppColors.primary),
