@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_theme.dart';
 import 'privacy_screen.dart';
 
@@ -93,6 +94,10 @@ class AboutScreen extends StatelessWidget {
                   subtitle: Text('查看源代码', style: TextStyle(color: AppColors.textSecondary)),
                   contentPadding: EdgeInsets.zero,
                   trailing: Icon(Icons.chevron_right_rounded, color: AppColors.textHint),
+                  onTap: () => launchUrl(
+                    Uri.parse('https://github.com/guqlule/bodian-music'),
+                    mode: LaunchMode.externalApplication,
+                  ),
                 ),
                 ListTile(
                   leading: Icon(Icons.bug_report_rounded, color: AppColors.primary),
