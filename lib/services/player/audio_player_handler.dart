@@ -22,6 +22,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   MediaItem? _currentItem;
   String _baseMediaId = '';
   String? _lastLyricText;
+  String _baseSongTitle = '';
 
   AudioPlayerHandler({
     required AudioPlayer player,
@@ -81,12 +82,15 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   void _rewriteLyricsMetadata() {
     final line = _lastLyricText;
     if (line == null || line.isEmpty) return;
+    // 参考 lx-music-mobile：title=歌词行，artist=歌名-歌手
+    final cur = _currentItem;
+    final songTitle = _baseSongTitle;
     unawaited(MediaSessionService().updateLyric(
       title: line,
-      artist: _currentItem?.artist ?? '',
-      album: _currentItem?.album ?? '',
+      artist: songTitle.isEmpty ? (cur?.artist ?? '') : '$songTitle${(cur?.artist ?? '').isEmpty ? '' : ' - ${cur?.artist}'}',
+      album: cur?.album ?? '',
       lyric: line,
-      durationMs: (_player.duration ?? _currentItem?.duration)?.inMilliseconds,
+      durationMs: (_player.duration ?? cur?.duration)?.inMilliseconds,
     ));
   }
 
@@ -103,6 +107,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       return;
     }
     _baseMediaId = music.id;
+    _baseSongTitle = music.name;
     _lastLyricText = null;
     // 切歌时清空 session extras 歌词，避免旧歌歌词在 Jovi InCar 卡片残留
     unawaited(MediaSessionService().clearLyric());
@@ -182,9 +187,14 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       mediaItem.add(_currentItem);
 
       Future.delayed(const Duration(milliseconds: 300), () {
+        // 参考 lx-music-mobile：title=歌词行，artist=歌名-歌手
+        final singer = cur.artist ?? '';
+        final artistText = _baseSongTitle.isEmpty
+            ? singer
+            : '$_baseSongTitle${singer.isEmpty ? '' : ' - $singer'}';
         MediaSessionService().updateLyric(
           title: hasLine ? line! : cur.title,
-          artist: cur.artist ?? '',
+          artist: artistText,
           album: cur.album ?? '',
           lyric: text,
           durationMs: (dur ?? cur.duration)?.inMilliseconds,
