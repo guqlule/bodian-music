@@ -24,6 +24,12 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   String? _lastLyricText;
   String _baseSongTitle = '';
 
+  /// 每行歌词的 mediaId 变体计数。
+  /// 车机 AVRCP 用 mediaId 派生 UID 判断是否同一首歌，
+  /// mediaId 不变车机不刷新 title → 每行换一个变体强制刷新。
+  int _lyricMediaSeq = 0;
+  String _currentLyricMediaId = '';
+
   AudioPlayerHandler({
     required AudioPlayer player,
     required this.onPlayNext,
@@ -91,6 +97,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       album: cur?.album ?? '',
       lyric: line,
       durationMs: (_player.duration ?? cur?.duration)?.inMilliseconds,
+      mediaId: _currentLyricMediaId.isEmpty ? null : _currentLyricMediaId,
     ));
   }
 
@@ -108,6 +115,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     }
     _baseMediaId = music.id;
     _baseSongTitle = music.name;
+    _lyricMediaSeq = 0;
+    _currentLyricMediaId = '';
     _lastLyricText = null;
     // 切歌时清空 session extras 歌词，避免旧歌歌词在 Jovi InCar 卡片残留
     unawaited(MediaSessionService().clearLyric());
@@ -163,6 +172,15 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final cur = _currentItem!;
       final dur = _player.duration;
 
+      // 车机 AVRCP 用 mediaId 派生 UID 判定曲目，mediaId 不变则忽略 title 变化。
+      // 每行歌词递增一个 mediaId 变体，强制车机判定"曲目变化"→重读 title（歌词行）。
+      if (hasLine) {
+        _lyricMediaSeq++;
+        _currentLyricMediaId = '$_baseMediaId#$_lyricMediaSeq';
+      } else {
+        _currentLyricMediaId = '';
+      }
+
       // 灵动岛/通知栏/Jovi InCar 卡片读 audio_service 的 this.mediaMetadata（由 mediaItem.add 驱动）
       // 蓝牙车机读 session.controller.metadata（由 MethodChannel 驱动）
       // 双路径：mediaItem.add() 走 audio_service 流，MethodChannel 直接写 session。
@@ -198,6 +216,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           album: cur.album ?? '',
           lyric: text,
           durationMs: (dur ?? cur.duration)?.inMilliseconds,
+          mediaId: _currentLyricMediaId.isEmpty ? null : _currentLyricMediaId,
         );
         // 同时写入 PlaybackState extras（Jovi InCar 可能从这里读歌词）
         MediaSessionService().setPlaybackStateLyric(text);

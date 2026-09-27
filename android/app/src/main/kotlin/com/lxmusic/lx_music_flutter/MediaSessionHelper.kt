@@ -129,6 +129,14 @@ class MediaSessionHelper {
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
 
+            // 车机 AVRCP 用 metadata 的 mediaId 派生 UID 判断"是否同一首歌"。
+            // mediaId 不变时车机认为曲目没变，忽略 title 变化（不刷新显示）。
+            // 每次歌词推送传入递增的 mediaId 变体，强制车机判定曲目变化并重读 title。
+            val mediaIdArg = call.argument<String>("mediaId")
+            if (!mediaIdArg.isNullOrEmpty()) {
+                builder.putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, mediaIdArg)
+            }
+
             // 部分国产车机（尤其是支持"蓝牙歌词"的车机）读取自定�?LYRICS 字段显示歌词�?
             // 使用标准 key "android.media.metadata.LYRICS"，该 key �?MediaMetadataCompat �?
             // 未定义常量但底层 Bundle 支持任意字符�?key�?
@@ -173,6 +181,11 @@ class MediaSessionHelper {
                         .setBufferedPosition(pb.bufferedPosition)
                         .build()
                 )
+            }
+
+            // 部分车机只对 active session 下发 metadata 变化事件
+            if (!session.isActive) {
+                session.setActive(true)
             }
 
             result.success(true)
