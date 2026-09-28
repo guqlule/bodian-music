@@ -14,7 +14,7 @@ import io.flutter.plugin.common.MethodChannel
  *
  * 车机蓝牙�?MediaSession metadata 读取歌词显示�?
  */
-class MediaSessionHelper {
+class MediaSessionHelper(private val context: android.content.Context) {
 
     @Volatile private var cachedSession: MediaSessionCompat? = null
 
@@ -45,6 +45,9 @@ class MediaSessionHelper {
             "updateLyric" -> handleUpdateLyric(call, result)
             "clearLyric" -> handleClearLyric(result)
             "setPlaybackStateLyric" -> handleSetPlaybackStateLyric(call, result)
+            "isCarMode" -> {
+                result.success(CarModeDetector.isCarConnected(context))
+            }
             else -> result.notImplemented()
         }
     }

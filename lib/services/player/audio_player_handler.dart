@@ -44,6 +44,26 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   /// 缓存的"蓝牙歌词"开关。播放期间读取一次，避免 500ms tick 频繁读 SharedPreferences。
   bool _btLyricCached = true;
 
+  /// 是否接入车机（Jovi InCar / HiCar / Android Auto）。
+  /// 车机模式下 title 必须保持歌名——车机首页卡片主位是 title，
+  /// 写歌词会让标题一直跳歌词；歌词改走 LYRICS / displayDescription 字段。
+  /// 蓝牙 AVRCP 车机只认 title，所以非车机模式才把歌词写进 title。
+  bool _carMode = false;
+  String? _lastKnownLine;
+  int _carModeTick = 0;
+
+  /// 重新检测车机接入状态。状态翻转时立即重推当前歌词，切换显示策略。
+  Future<void> refreshCarMode() async {
+    final v = await MediaSessionService().isCarMode();
+    if (v == _carMode) return;
+    _carMode = v;
+    final line = _lastKnownLine;
+    if (line != null && line.isNotEmpty) {
+      _lastLyricText = null;
+      updateLyricLine(line);
+    }
+  }
+
   /// 是否启用蓝牙/车机歌词推送。从 SharedPreferences 读取。
   Future<bool> _readBluetoothLyricEnabled() async {
     try {
@@ -76,6 +96,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         (_) {
           _broadcastState();
           _rewriteLyricsMetadata();
+          // 每 15s 复查一次车机接入状态
+          if (++_carModeTick >= 30) {
+            _carModeTick = 0;
+            unawaited(refreshCarMode());
+          }
         },
       );
     } else {
@@ -89,10 +114,14 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     final line = _lastLyricText;
     if (line == null || line.isEmpty) return;
     // 参考 lx-music-mobile：title=歌词行，artist=歌名-歌手
+    // 车机模式例外：title 保持歌名，避免 Jovi 首页卡片标题跳歌词
     final cur = _currentItem;
     final songTitle = _baseSongTitle;
+    final metaTitle = _carMode
+        ? (songTitle.isEmpty ? (cur?.title ?? '') : songTitle)
+        : line;
     unawaited(MediaSessionService().updateLyric(
-      title: line,
+      title: metaTitle,
       artist: songTitle.isEmpty ? (cur?.artist ?? '') : '$songTitle${(cur?.artist ?? '').isEmpty ? '' : ' - ${cur?.artist}'}',
       album: cur?.album ?? '',
       lyric: line,
@@ -118,6 +147,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     _lyricMediaSeq = 0;
     _currentLyricMediaId = '';
     _lastLyricText = null;
+    _lastKnownLine = null;
+    unawaited(refreshCarMode());
     // 切歌时清空 session extras 歌词，避免旧歌歌词在 Jovi InCar 卡片残留
     unawaited(MediaSessionService().clearLyric());
     try {
@@ -156,6 +187,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   void updateLyricLine(String? line) {
     if (_currentItem == null) return;
     final text = line ?? '';
+    _lastKnownLine = text;
     if (text == _lastLyricText) return;
     _lastLyricText = text;
 
@@ -181,6 +213,18 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         _currentLyricMediaId = '';
       }
 
+      // 车机模式：title 保持歌名，歌词放 displaySubtitle/displayDescription/extras
+      // 蓝牙模式：title 写歌词行（AVRCP 车机只认 title）
+      final songTitle = _baseSongTitle.isEmpty ? cur.title : _baseSongTitle;
+      final singer = cur.artist ?? '';
+      final artistText = _baseSongTitle.isEmpty
+          ? singer
+          : '$_baseSongTitle${singer.isEmpty ? '' : ' - $singer'}';
+      final metaTitle = _carMode ? songTitle : (hasLine ? line : songTitle);
+      final metaSubtitle = _carMode
+          ? (hasLine ? line : '')
+          : (cur.artist ?? '');
+
       // 灵动岛/通知栏/Jovi InCar 卡片读 audio_service 的 this.mediaMetadata（由 mediaItem.add 驱动）
       // 蓝牙车机读 session.controller.metadata（由 MethodChannel 驱动）
       // 双路径：mediaItem.add() 走 audio_service 流，MethodChannel 直接写 session。
@@ -192,13 +236,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       // 车机就永远停在第一句歌词。两路写入共用同一个变体 id，先后顺序不再重要。
       _currentItem = MediaItem(
         id: _currentLyricMediaId.isEmpty ? _baseMediaId : _currentLyricMediaId,
-        title: hasLine ? line : cur.title,
+        title: metaTitle,
         artist: cur.artist,
         album: cur.album ?? '',
         artUri: cur.artUri,
         duration: dur ?? cur.duration,
-        displayTitle: hasLine ? line : (cur.displayTitle ?? cur.title),
-        displaySubtitle: cur.artist ?? '',
+        displayTitle: metaTitle,
+        displaySubtitle: metaSubtitle,
         displayDescription: hasLine ? line : (cur.album ?? ''),
         extras: {
           'lyric': line ?? '',
@@ -209,13 +253,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       mediaItem.add(_currentItem);
 
       Future.delayed(const Duration(milliseconds: 300), () {
-        // 参考 lx-music-mobile：title=歌词行，artist=歌名-歌手
-        final singer = cur.artist ?? '';
-        final artistText = _baseSongTitle.isEmpty
-            ? singer
-            : '$_baseSongTitle${singer.isEmpty ? '' : ' - $singer'}';
         MediaSessionService().updateLyric(
-          title: hasLine ? line : cur.title,
+          title: metaTitle,
           artist: artistText,
           album: cur.album ?? '',
           lyric: text,
@@ -346,6 +385,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   Future<void> play() async {
     await _player.play();
     _btLyricCached = await _readBluetoothLyricEnabled();
+    await refreshCarMode();
     _updatePosRefreshTimer();
   }
 

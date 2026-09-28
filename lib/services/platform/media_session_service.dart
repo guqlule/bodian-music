@@ -55,4 +55,16 @@ class MediaSessionService {
       return false;
     }
   }
+
+  /// 是否接入车机（Jovi InCar / HiCar / Android Auto 等）。
+  /// 车机模式下 title 必须保持歌名（否则首页卡片标题会跳歌词），
+  /// 歌词只写 LYRICS / displayDescription 字段。
+  Future<bool> isCarMode() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('isCarMode');
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 }
