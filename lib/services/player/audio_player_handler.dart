@@ -184,10 +184,14 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       // 灵动岛/通知栏/Jovi InCar 卡片读 audio_service 的 this.mediaMetadata（由 mediaItem.add 驱动）
       // 蓝牙车机读 session.controller.metadata（由 MethodChannel 驱动）
       // 双路径：mediaItem.add() 走 audio_service 流，MethodChannel 直接写 session。
-      // audio_service 的 Java setMediaItem 用 new Builder() 会重建 metadata，
-      // 可能覆盖 MethodChannel 刚设的歌词。所以 MethodChannel 延迟 300ms 执行，确保最后写。
+      //
+      // 关键：MediaItem.id 也要用递增变体。
+      // 车机 AVRCP 只在「mediaId 派生 UID 变化」时才收到 EVT_TRACK_CHANGED 并重读 title。
+      // audio_service 的 setMediaItem 在后台线程执行（封面为网络 URL 时还会等封面加载），
+      // 常常晚于 MethodChannel 落地。若 MediaItem.id 固定，uid 会被写回旧值，
+      // 车机就永远停在第一句歌词。两路写入共用同一个变体 id，先后顺序不再重要。
       _currentItem = MediaItem(
-        id: _baseMediaId,
+        id: _currentLyricMediaId.isEmpty ? _baseMediaId : _currentLyricMediaId,
         title: hasLine ? line : cur.title,
         artist: cur.artist,
         album: cur.album ?? '',
@@ -211,7 +215,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
             ? singer
             : '$_baseSongTitle${singer.isEmpty ? '' : ' - $singer'}';
         MediaSessionService().updateLyric(
-          title: hasLine ? line! : cur.title,
+          title: hasLine ? line : cur.title,
           artist: artistText,
           album: cur.album ?? '',
           lyric: text,
@@ -248,7 +252,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         final m = playlist[currentIndex];
         // 同一首歌：不要覆盖 _currentItem 的歌词 title/extras，
         // 否则队列同步会把歌词抹回歌名，车机显示歌名而非歌词行
-        if (_currentItem?.id == m.id) {
+        // 注意：_currentItem.id 在推送歌词时是递增变体，所以比对 _baseMediaId
+        if (_baseMediaId == m.id) {
           return;
         }
         final item = MediaItem(
