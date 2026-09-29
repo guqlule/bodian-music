@@ -24,12 +24,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   String? _lastLyricText;
   String _baseSongTitle = '';
 
-  /// 每行歌词的 mediaId 变体计数。
-  /// 车机 AVRCP 用 mediaId 派生 UID 判断是否同一首歌，
-  /// mediaId 不变车机不刷新 title → 每行换一个变体强制刷新。
-  int _lyricMediaSeq = 0;
-  String _currentLyricMediaId = '';
-
   AudioPlayerHandler({
     required AudioPlayer player,
     required this.onPlayNext,
@@ -43,6 +37,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
   /// 缓存的"蓝牙歌词"开关。播放期间读取一次，避免 500ms tick 频繁读 SharedPreferences。
   bool _btLyricCached = true;
+
+  /// 最近一次推给车机的播放位置（用于制造大幅 position 跳变，触发车机重读 metadata）
+  Duration _lastAdvertisedPos = Duration.zero;
+  int _posBumpTick = 0;
 
   /// 是否接入车机（Jovi InCar / HiCar / Android Auto）。
   /// 车机模式下 title 必须保持歌名——车机首页卡片主位是 title，
@@ -94,7 +92,17 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       _posRefreshTimer ??= Timer.periodic(
         const Duration(milliseconds: 500),
         (_) {
-          _broadcastState();
+          // 车机不刷新 metadata 时（AVRCP 只在 EVT_TRACK_CHANGED 或播放位置变化时重读），
+          // 用「大幅 position 跳变」制造能被车机察觉的变化，触发它重读 title。
+          // 每 1.2s 交替 +3s/-3s，相对上次跨 6s，足够大。
+          if (++_posBumpTick >= 3) {
+            _posBumpTick = 0;
+            final base = _player.position;
+            _lastAdvertisedPos = (base - _lastAdvertisedPos).abs() < Duration(seconds: 2)
+                ? base + const Duration(seconds: 3)
+                : base - const Duration(seconds: 3);
+            _broadcastState(positionOverride: _lastAdvertisedPos);
+          }
           _rewriteLyricsMetadata();
           // 每 15s 复查一次车机接入状态
           if (++_carModeTick >= 30) {
@@ -126,7 +134,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       album: cur?.album ?? '',
       lyric: line,
       durationMs: (_player.duration ?? cur?.duration)?.inMilliseconds,
-      mediaId: _currentLyricMediaId.isEmpty ? null : _currentLyricMediaId,
     ));
   }
 
@@ -144,8 +151,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     }
     _baseMediaId = music.id;
     _baseSongTitle = music.name;
-    _lyricMediaSeq = 0;
-    _currentLyricMediaId = '';
     _lastLyricText = null;
     _lastKnownLine = null;
     unawaited(refreshCarMode());
@@ -204,15 +209,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final cur = _currentItem!;
       final dur = _player.duration;
 
-      // 车机 AVRCP 用 mediaId 派生 UID 判定曲目，mediaId 不变则忽略 title 变化。
-      // 每行歌词递增一个 mediaId 变体，强制车机判定"曲目变化"→重读 title（歌词行）。
-      if (hasLine) {
-        _lyricMediaSeq++;
-        _currentLyricMediaId = '$_baseMediaId#$_lyricMediaSeq';
-      } else {
-        _currentLyricMediaId = '';
-      }
-
       // 车机模式：title 保持歌名，歌词放 displaySubtitle/displayDescription/extras
       // 蓝牙模式：title 写歌词行（AVRCP 车机只认 title）
       final songTitle = _baseSongTitle.isEmpty ? cur.title : _baseSongTitle;
@@ -229,13 +225,12 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       // 蓝牙车机读 session.controller.metadata（由 MethodChannel 驱动）
       // 双路径：mediaItem.add() 走 audio_service 流，MethodChannel 直接写 session。
       //
-      // 关键：MediaItem.id 也要用递增变体。
-      // 车机 AVRCP 只在「mediaId 派生 UID 变化」时才收到 EVT_TRACK_CHANGED 并重读 title。
-      // audio_service 的 setMediaItem 在后台线程执行（封面为网络 URL 时还会等封面加载），
-      // 常常晚于 MethodChannel 落地。若 MediaItem.id 固定，uid 会被写回旧值，
-      // 车机就永远停在第一句歌词。两路写入共用同一个变体 id，先后顺序不再重要。
+      // mediaId 保持 _baseMediaId 不变：Android 13+ 蓝牙栈的 UID 由
+      // 「类型+title+artist+album」哈希得到（MediaData.getUID），
+      // 改 mediaId 无效；反而频繁变 mediaId 会让车机以为是快速切歌。
+      // 车机刷新靠播放位置跳变（见 _updatePosRefreshTimer）。
       _currentItem = MediaItem(
-        id: _currentLyricMediaId.isEmpty ? _baseMediaId : _currentLyricMediaId,
+        id: _baseMediaId,
         title: metaTitle,
         artist: cur.artist,
         album: cur.album ?? '',
@@ -259,7 +254,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           album: cur.album ?? '',
           lyric: text,
           durationMs: (dur ?? cur.duration)?.inMilliseconds,
-          mediaId: _currentLyricMediaId.isEmpty ? null : _currentLyricMediaId,
         );
         // 同时写入 PlaybackState extras（Jovi InCar 可能从这里读歌词）
         MediaSessionService().setPlaybackStateLyric(text);
@@ -327,14 +321,14 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
   void syncPlaybackState() => _broadcastState();
 
-  void _broadcastState({int positionOffset = 0}) {
+  void _broadcastState({int positionOffset = 0, Duration? positionOverride}) {
     try {
       final playing = _player.playing;
       final processingState = _mapProcessingState(_player.processingState);
       final ci = _player.currentIndex;
       final qLen = queue.value.length;
       final validIndex = (ci != null && ci >= 0 && ci < qLen) ? ci : null;
-      var position = _player.position;
+      var position = positionOverride ?? _player.position;
       if (positionOffset > 0) {
         position = position + Duration(milliseconds: positionOffset);
       }

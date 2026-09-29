@@ -172,21 +172,7 @@ class MediaSessionHelper(private val context: android.content.Context) {
 
             session.setMetadata(meta)
 
-            // 参考 lx-music-mobile 的 MetadataManager.updateTitles()：
-            // setMetadata 之后必须在同一个调用里同步重推 PlaybackState，
-            // 很多车机只在 PlaybackState 变化时才重读 metadata（AVRCP 缓存）。
-            // 位置 +1ms 强制产生一个"新"的 PlaybackState 对象。
-            val pb = session.controller?.playbackState
-            if (pb != null) {
-                session.setPlaybackState(
-                    android.support.v4.media.session.PlaybackStateCompat.Builder(pb)
-                        .setState(pb.state, pb.position + 1, pb.playbackSpeed, android.os.SystemClock.elapsedRealtime())
-                        .setBufferedPosition(pb.bufferedPosition)
-                        .build()
-                )
-            }
-
-            // 部分车机只对 active session 下发 metadata 变化事件
+            // 保证 session 是 active，否则蓝牙栈不会把 metadata 变化推给车机
             if (!session.isActive) {
                 session.setActive(true)
             }
