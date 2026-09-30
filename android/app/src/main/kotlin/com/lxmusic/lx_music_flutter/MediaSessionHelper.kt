@@ -113,41 +113,33 @@ class MediaSessionHelper(private val context: android.content.Context) {
             val album = call.argument<String>("album") ?: ""
             val lyric = call.argument<String>("lyric") ?: ""
             val durationMs = call.argument<Number>("durationMs")?.toLong()
+            val positionMs = call.argument<Number>("positionMs")?.toLong()
 
-            // 在现�?metadata 基础上合并更新：
-            // - 保留 audio_service 设置�?duration / art / mediaId
-            // - 只更�?DISPLAY_TITLE / DISPLAY_DESCRIPTION 为歌�?
-            // - mediaId 保持不变，避免车机认�?快速切�?而忽略歌词更�?
+            // 在现有 metadata 基础上合并更新，保留 audio_service 设置的
+            // mediaId / duration / 封面等字段（参考 MetadataManager 复用 prevMetadata）。
             val existing = session.controller?.metadata
             val builder = if (existing != null) {
                 MediaMetadataCompat.Builder(existing)
             } else {
                 MediaMetadataCompat.Builder()
-                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
-                    .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
+                    .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, call.argument<String>("mediaId") ?: "")
             }
 
             builder
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
 
-            // 车机 AVRCP 用 metadata 的 mediaId 派生 UID 判断"是否同一首歌"。
-            // mediaId 不变时车机认为曲目没变，忽略 title 变化（不刷新显示）。
-            // 每次歌词推送传入递增的 mediaId 变体，强制车机判定曲目变化并重读 title。
-            val mediaIdArg = call.argument<String>("mediaId")
-            if (!mediaIdArg.isNullOrEmpty()) {
-                builder.putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, mediaIdArg)
-            }
-
-            // 部分国产车机（尤其是支持"蓝牙歌词"的车机）读取自定�?LYRICS 字段显示歌词�?
-            // 使用标准 key "android.media.metadata.LYRICS"，该 key �?MediaMetadataCompat �?
-            // 未定义常量但底层 Bundle 支持任意字符�?key�?
+            // 部分国产车机（尤其是支持"蓝牙歌词"的车机）读取自定义 LYRICS 字段显示歌词。
+            // 使用标准 key "android.media.metadata.LYRICS"，该 key 在 MediaMetadataCompat 中
+            // 未定义常量但底层 Bundle 支持任意字符串 key。
             if (lyric.isNotEmpty()) {
                 builder.putString("android.media.metadata.LYRICS", lyric)
             }
 
-            // 只在 durationMs 提供且有效时更新，否则保�?existing �?duration
+            // 只在 durationMs 提供且有效时更新，否则保留 existing 的 duration
             if (durationMs != null && durationMs > 0) {
                 builder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
             } else if (existing != null) {
@@ -159,9 +151,9 @@ class MediaSessionHelper(private val context: android.content.Context) {
 
             val meta = builder.build()
 
-            // 先写 extras 再写 metadata�?
-            // Jovi InCar 可能�?onMetadataChanged 回调里读�?getExtras()�?
-            // 如果�?setMetadata �?setExtras，Jovi 读到的还是旧 extras�?
+            // 先写 extras 再写 metadata：
+            // Jovi InCar 可能在 onMetadataChanged 回调里读 getExtras()，
+            // 如果先 setMetadata 后 setExtras，Jovi 读到的还是旧 extras。
             val extras = android.os.Bundle().apply {
                 putString("lyric", lyric)
                 putString("lyrics", lyric)
@@ -175,6 +167,24 @@ class MediaSessionHelper(private val context: android.content.Context) {
             // 保证 session 是 active，否则蓝牙栈不会把 metadata 变化推给车机
             if (!session.isActive) {
                 session.setActive(true)
+            }
+
+            // 参考 MetadataManager.updateTitles()：setMetadata 之后在**同一次调用里**
+            // 立即重推 PlaybackState。播放位置随时间推进，这次推送会触发车机重读 title。
+            // 必须在同一个同步调用内完成，跨调用/延迟推送时序不可靠。
+            if (positionMs != null) {
+                val pb = session.controller?.playbackState
+                val state = pb?.state ?: android.support.v4.media.session.PlaybackStateCompat.STATE_PLAYING
+                val actions = pb?.actions ?: 0L
+                val buffered = pb?.bufferedPosition ?: 0L
+                val speed = pb?.playbackSpeed?.takeIf { it > 0f } ?: 1f
+                session.setPlaybackState(
+                    android.support.v4.media.session.PlaybackStateCompat.Builder()
+                        .setActions(actions)
+                        .setState(state, positionMs, speed, android.os.SystemClock.elapsedRealtime())
+                        .setBufferedPosition(buffered)
+                        .build()
+                )
             }
 
             result.success(true)

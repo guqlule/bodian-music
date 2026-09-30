@@ -38,10 +38,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   /// 缓存的"蓝牙歌词"开关。播放期间读取一次，避免 500ms tick 频繁读 SharedPreferences。
   bool _btLyricCached = true;
 
-  /// 最近一次推给车机的播放位置（用于制造大幅 position 跳变，触发车机重读 metadata）
-  Duration _lastAdvertisedPos = Duration.zero;
-  int _posBumpTick = 0;
-
   /// 是否接入车机（Jovi InCar / HiCar / Android Auto）。
   /// 车机模式下 title 必须保持歌名——车机首页卡片主位是 title，
   /// 写歌词会让标题一直跳歌词；歌词改走 LYRICS / displayDescription 字段。
@@ -82,30 +78,21 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     });
   }
 
-  /// 古早车机蓝牙只在 playbackState position 变化时才刷新显示。
-  /// 同时每 500ms 重写一次 LYRICS key：
-  /// audio_service 的 setMediaItem 会用 createMediaMetadata 重建整个
-  /// metadata bundle（不含 LYRICS key），把 MethodChannel 写入的歌词抹掉。
-  /// 定期重写确保车机读到的 LYRICS 始终是当前行。
+  /// 车机进度条需要播放位置持续推进，所以每 1s 推一次真实位置。
+  ///
+  /// 关键：这里**绝对不能**碰 metadata。
+  /// 之前每 500ms 重写一次 metadata，车机收到过密的元数据变更后
+  /// 会判定数据不稳定并拒收后续更新（只认第一次），
+  /// 表现为蓝牙歌词永远停在第一句。参考项目 lx-music-mobile 也只
+  /// 在歌词行变化时写 metadata（3~5s 一次）。
   void _updatePosRefreshTimer() {
     if (_player.playing && _btLyricCached) {
       _posRefreshTimer ??= Timer.periodic(
-        const Duration(milliseconds: 500),
+        const Duration(milliseconds: 1000),
         (_) {
-          // 车机不刷新 metadata 时（AVRCP 只在 EVT_TRACK_CHANGED 或播放位置变化时重读），
-          // 用「大幅 position 跳变」制造能被车机察觉的变化，触发它重读 title。
-          // 每 1.2s 交替 +3s/-3s，相对上次跨 6s，足够大。
-          if (++_posBumpTick >= 3) {
-            _posBumpTick = 0;
-            final base = _player.position;
-            _lastAdvertisedPos = (base - _lastAdvertisedPos).abs() < Duration(seconds: 2)
-                ? base + const Duration(seconds: 3)
-                : base - const Duration(seconds: 3);
-            _broadcastState(positionOverride: _lastAdvertisedPos);
-          }
-          _rewriteLyricsMetadata();
+          _broadcastState();
           // 每 15s 复查一次车机接入状态
-          if (++_carModeTick >= 30) {
+          if (++_carModeTick >= 15) {
             _carModeTick = 0;
             unawaited(refreshCarMode());
           }
@@ -115,26 +102,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       _posRefreshTimer?.cancel();
       _posRefreshTimer = null;
     }
-  }
-
-  /// 重写 LYRICS key（不改 title，避免闪歌名）
-  void _rewriteLyricsMetadata() {
-    final line = _lastLyricText;
-    if (line == null || line.isEmpty) return;
-    // 参考 lx-music-mobile：title=歌词行，artist=歌名-歌手
-    // 车机模式例外：title 保持歌名，避免 Jovi 首页卡片标题跳歌词
-    final cur = _currentItem;
-    final songTitle = _baseSongTitle;
-    final metaTitle = _carMode
-        ? (songTitle.isEmpty ? (cur?.title ?? '') : songTitle)
-        : line;
-    unawaited(MediaSessionService().updateLyric(
-      title: metaTitle,
-      artist: songTitle.isEmpty ? (cur?.artist ?? '') : '$songTitle${(cur?.artist ?? '').isEmpty ? '' : ' - ${cur?.artist}'}',
-      album: cur?.album ?? '',
-      lyric: line,
-      durationMs: (_player.duration ?? cur?.duration)?.inMilliseconds,
-    ));
   }
 
   void cancelPlaybackSubscription() {
@@ -223,54 +190,63 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
       // 灵动岛/通知栏/Jovi InCar 卡片读 audio_service 的 this.mediaMetadata（由 mediaItem.add 驱动）
       // 蓝牙车机读 session.controller.metadata（由 MethodChannel 驱动）
-      // 双路径：mediaItem.add() 走 audio_service 流，MethodChannel 直接写 session。
       //
-      // mediaId 保持 _baseMediaId 不变：Android 13+ 蓝牙栈的 UID 由
-      // 「类型+title+artist+album」哈希得到（MediaData.getUID），
-      // 改 mediaId 无效；反而频繁变 mediaId 会让车机以为是快速切歌。
-      // 车机刷新靠播放位置跳变（见 _updatePosRefreshTimer）。
-      _currentItem = MediaItem(
-        id: _baseMediaId,
-        title: metaTitle,
-        artist: cur.artist,
-        album: cur.album ?? '',
-        artUri: cur.artUri,
-        duration: dur ?? cur.duration,
-        displayTitle: metaTitle,
-        displaySubtitle: metaSubtitle,
-        displayDescription: hasLine ? line : (cur.album ?? ''),
-        extras: {
-          'lyric': line ?? '',
-          'lyrics': line ?? '',
-          'android.media.metadata.LYRICS': line ?? '',
-        },
-      );
-      mediaItem.add(_currentItem);
+      // 蓝牙模式：MethodChannel 是唯一写入方。
+      // 不再调 mediaItem.add —— 它会让 audio_service 抢着写 metadata，
+      // 两个写入方交替覆盖，车机收到过密/矛盾的元数据后拒收后续更新。
+      // 车机模式：仍需 audio_service 写（title 保持歌名，歌词进 extras）。
+      if (_carMode) {
+        _currentItem = MediaItem(
+          id: _baseMediaId,
+          title: metaTitle,
+          artist: cur.artist,
+          album: cur.album ?? '',
+          artUri: cur.artUri,
+          duration: dur ?? cur.duration,
+          displayTitle: metaTitle,
+          displaySubtitle: metaSubtitle,
+          displayDescription: hasLine ? line : (cur.album ?? ''),
+          extras: {
+            'lyric': line ?? '',
+            'lyrics': line ?? '',
+            'android.media.metadata.LYRICS': line ?? '',
+          },
+        );
+        mediaItem.add(_currentItem);
+      }
 
-      Future.delayed(const Duration(milliseconds: 300), () {
+      // 立即写入，不延迟：原生端在同一次调用里 setMetadata + setPlaybackState，
+      // 与参考项目 MetadataManager.updateTitles() 的时序一致。
+      unawaited(Future.wait([
         MediaSessionService().updateLyric(
           title: metaTitle,
           artist: artistText,
           album: cur.album ?? '',
           lyric: text,
           durationMs: (dur ?? cur.duration)?.inMilliseconds,
-        );
-        // 同时写入 PlaybackState extras（Jovi InCar 可能从这里读歌词）
-        MediaSessionService().setPlaybackStateLyric(text);
-      });
-
-      // 车机蓝牙只在 PlaybackState 变化时才重新读取 metadata（androidx/media #430）。
-      // mediaId 保持不变（避免车机判定"快速切歌"），所以每行歌词推送时
-      // 主动触发一次 position+1ms 的 PlaybackState 更新，强制车机重读 title。
-      if (hasLine) {
-        _broadcastState(positionOffset: 1);
-      }
+          positionMs: _player.position.inMilliseconds,
+        ),
+        // Jovi InCar 可能从 PlaybackState extras 读歌词
+        MediaSessionService().setPlaybackStateLyric(text),
+      ]));
     } catch (_) {}
   }
 
   Future<void> syncQueueToSystem(List<MusicInfo> playlist, int currentIndex) async {
     try {
-      final items = playlist.map((m) => MediaItem(
+      // 只把当前歌曲推进系统队列，不要把整个播放列表（可达 600 项）塞进去。
+      //
+      // 原因（dumpsys 实测）：塞 600 项时 queueTitle=size=600，
+      // 每次歌词更新都会触发 Android 蓝牙栈的 onQueueChanged →
+      // EVT_NOW_PLAYING_CHANGED，栈忙于同步队列而忽略 metadata 变化，
+      // 车机因此停在第一句歌词。QQ 音乐的 session queue size=0，
+      // 参考项目 lx-music-mobile 也不推队列，两者在车机上都能正常滚动。
+      if (currentIndex < 0 || currentIndex >= playlist.length) {
+        queue.add(<MediaItem>[]);
+        return;
+      }
+      final m = playlist[currentIndex];
+      queue.add([MediaItem(
         id: m.id,
         title: m.name,
         artist: m.singer,
@@ -279,32 +255,28 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         duration: m.duration > 0 ? Duration(milliseconds: m.duration) : null,
         // Jovi InCar 可能从队列项的 MediaDescription extras 读歌词
         extras: {'lyric': '', 'lyrics': ''},
-      )).toList();
-      queue.add(items);
-      if (currentIndex >= 0 && currentIndex < playlist.length) {
-        final m = playlist[currentIndex];
-        // 同一首歌：不要覆盖 _currentItem 的歌词 title/extras，
-        // 否则队列同步会把歌词抹回歌名，车机显示歌名而非歌词行
-        // 注意：_currentItem.id 在推送歌词时是递增变体，所以比对 _baseMediaId
-        if (_baseMediaId == m.id) {
-          return;
-        }
-        final item = MediaItem(
-          id: m.id,
-          title: m.name,
-          artist: m.singer,
-          album: m.album,
-          artUri: _buildArtUri(m),
-          duration: m.duration > 0 ? Duration(milliseconds: m.duration) : null,
-          displayTitle: m.name,
-          displaySubtitle: '',
-          displayDescription: m.album,
-          extras: {'lyric': '', 'lyrics': ''},
-        );
-        _currentItem = item;
-        _lastLyricText = null;
-        mediaItem.add(item);
+      )]);
+
+      // 同一首歌：不要覆盖 _currentItem 的歌词 title/extras，
+      // 否则队列同步会把歌词抹回歌名，车机显示歌名而非歌词行
+      if (_baseMediaId == m.id) {
+        return;
       }
+      final item = MediaItem(
+        id: m.id,
+        title: m.name,
+        artist: m.singer,
+        album: m.album,
+        artUri: _buildArtUri(m),
+        duration: m.duration > 0 ? Duration(milliseconds: m.duration) : null,
+        displayTitle: m.name,
+        displaySubtitle: '',
+        displayDescription: m.album,
+        extras: {'lyric': '', 'lyrics': ''},
+      );
+      _currentItem = item;
+      _lastLyricText = null;
+      mediaItem.add(item);
     } catch (_) {}
   }
 
