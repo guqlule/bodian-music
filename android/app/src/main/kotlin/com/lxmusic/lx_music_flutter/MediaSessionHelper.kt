@@ -113,6 +113,7 @@ class MediaSessionHelper(private val context: android.content.Context) {
             val album = call.argument<String>("album") ?: ""
             val lyric = call.argument<String>("lyric") ?: ""
             val fullLyric = call.argument<String>("fullLyric") ?: ""
+            val vivoMediaId = call.argument<String>("vivoMediaId") ?: ""
             val durationMs = call.argument<Number>("durationMs")?.toLong()
             val positionMs = call.argument<Number>("positionMs")?.toLong()
 
@@ -133,14 +134,19 @@ class MediaSessionHelper(private val context: android.content.Context) {
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
 
-            // Jovi InCar 白名单三层通道：
-            //  - 第二层：ucar.media.metadata.LYRICS_WHOLE = 整首歌词，车机自己滚动
-            //  - 第三层：android.media.metadata.LYRIC      = 单行歌词
-            // 波点音乐不在第一层（网易云/QQ/酷我/酷狗）白名单，走第二层全文通道。
-            // 三种 key 都无条件写入，命中哪层都能显示；key 缺失会被判定"暂无歌词"。
-            builder.putString("ucar.media.metadata.LYRICS_WHOLE", fullLyric)
+            // Jovi InCar / vivo 原子随身听 白名单通道（参考 md3Music 实现）：
+            //  - 第二层 ucar.media.metadata.LYRICS_WHOLE  = 整首 LRC，车机自己滚动
+            //  - 必须同时写 LYRICS_STATUS = 0L 能力标志，否则车机显示"暂无歌词"
+            //  - 绝不能写 ucar.media.metadata.LYRICS_LINE（单行通道），
+            //    一旦写入车机会永久降级成单行模式
+            //  - vivomusicmix.* 走 session.setExtras 的原子随身听通道
+            if (fullLyric.isNotEmpty()) {
+                builder.putString("ucar.media.metadata.LYRICS_WHOLE", fullLyric)
+                builder.putLong("ucar.media.metadata.LYRICS_STATUS", 0L)
+                builder.putLong("vivomusicmix.media.metadata.support_event", 31L)
+            }
+            // 兼容层：单行歌词
             builder.putString("android.media.metadata.LYRIC", lyric)
-            // 兼容：部分车机认这个 key 读单行，必须是歌词行而非整首 LRC
             builder.putString("android.media.metadata.LYRICS", lyric)
 
             // 只在 durationMs 提供且有效时更新，否则保留 existing 的 duration
@@ -164,6 +170,14 @@ class MediaSessionHelper(private val context: android.content.Context) {
                 putString("android.media.metadata.LYRICS", lyric)
                 putString("lyric", lyric)
                 putString("lyrics", lyric)
+                // vivo 原子随身听：lrc_change 事件 + 歌曲标识（必须为 "title|artist"）
+                // 注意 meidia 是 vivo 官方拼写，改成 media 会导致投递失败
+                if (fullLyric.isNotEmpty()) {
+                    putString("vivomusicmix.meida.extra.key.action", "vivomusicmix.extra.lrc_change")
+                    putString("vivomusicmix.extra.key.meidia_id", vivoMediaId)
+                    putString("vivomusicmix.extra.key.lyric", fullLyric)
+                    putLong("vivomusicmix.media.metadata.support_event", 31L)
+                }
             }
             session.setExtras(extras)
 

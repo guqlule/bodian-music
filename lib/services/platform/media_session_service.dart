@@ -17,6 +17,7 @@ class MediaSessionService {
     required String album,
     String lyric = '',
     String? fullLyric,
+    String? vivoMediaId,
     int? durationMs,
     int? positionMs,
   }) async {
@@ -27,6 +28,7 @@ class MediaSessionService {
         'album': album,
         'lyric': lyric,
         if (fullLyric != null) 'fullLyric': fullLyric,
+        if (vivoMediaId != null) 'vivoMediaId': vivoMediaId,
         if (durationMs != null) 'durationMs': durationMs,
         if (positionMs != null) 'positionMs': positionMs,
       });

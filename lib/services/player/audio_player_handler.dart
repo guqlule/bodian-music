@@ -4,6 +4,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/music_model.dart';
+import '../lyric/car_lyric_formatter.dart';
 import '../platform/media_session_service.dart';
 
 /// 音频后台服务 handler
@@ -245,8 +246,12 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
             'lyric': line ?? '',
             'lyrics': line ?? '',
             'android.media.metadata.LYRIC': line ?? '',
-            // Jovi InCar 第二层：整首歌词，车机自己滚动（随歌词加载后由 pushFullLyric 写入）
-            if (_fullLyric.isNotEmpty) 'ucar.media.metadata.LYRICS_WHOLE': _fullLyric,
+            // Jovi InCar 第二层：整首歌词 + 能力标志（缺 STATUS 会显示"暂无歌词"）
+            if (_fullLyric.isNotEmpty) ...{
+              'ucar.media.metadata.LYRICS_WHOLE': _fullLyric,
+              'ucar.media.metadata.LYRICS_STATUS': 0,
+              'vivomusicmix.media.metadata.support_event': 31,
+            },
           },
         );
         mediaItem.add(_currentItem);
@@ -272,33 +277,43 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
   /// 推送整首歌词（LRC 原文）给车机。
   ///
-  /// Jovi InCar 白名单分三层，波点音乐属第二层：
-  /// 车机主动读 `ucar.media.metadata.LYRICS_WHOLE` 通道拿**整首歌词**，
-  /// 然后自己按时间轴滚动显示。所以这里必须推全文，不能只推单行。
+  /// Jovi InCar / vivo 原子随身听 白名单分三层，波点音乐属第二层：
+  /// 车机主动读 `ucar.media.metadata.LYRICS_WHOLE` 拿**整首歌词**，
+  /// 然后自己按时间轴滚动。所以这里必须推全文，不能只推单行。
+  ///
+  /// 关键（参考 md3Music 实现）：除了全文 key，还必须同时写
+  /// `ucar.media.metadata.LYRICS_STATUS = 0L` 这个能力标志，
+  /// 缺了它车机会认为"没有歌词"而显示"暂无歌词"。
+  /// 另外绝不能写 `ucar.media.metadata.LYRICS_LINE`（单行通道），
+  /// 一旦写入车机会永久降级成单行模式。
   void pushFullLyric(String rawLrc) {
-    _fullLyric = rawLrc;
+    final carLrc = CarLyricFormatter.format(rawLrc);
+    _fullLyric = carLrc;
     final prev = _currentItem;
     if (prev == null) return;
     try {
-      // 重建 MediaItem，保留已有 extras 并补上全文歌词
-      // （Jovi InCar 第二层通道：ucar.media.metadata.LYRICS_WHOLE = 整首歌词）
+      // 走 audio_service → session metadata 路径
       _currentItem = prev.copyWith(extras: {
         ...?prev.extras,
-        'ucar.media.metadata.LYRICS_WHOLE': rawLrc,
+        'ucar.media.metadata.LYRICS_WHOLE': carLrc,
+        'ucar.media.metadata.LYRICS_STATUS': 0,
+        'vivomusicmix.media.metadata.support_event': 31,
       });
       mediaItem.add(_currentItem);
     } catch (_) {}
     // 同时写 session metadata + extras（MethodChannel 路径）
     final cur = _currentItem;
     if (cur == null) return;
+    final songName = _baseSongTitle.isEmpty ? cur.title : _baseSongTitle;
+    // vivo 原子随身听要求歌曲标识为 "title|artist"
+    final vivoId = '$songName|${cur.artist ?? ''}';
     unawaited(MediaSessionService().updateLyric(
-      title: _carMode
-          ? (_baseSongTitle.isEmpty ? cur.title : _baseSongTitle)
-          : (cur.title),
+      title: _carMode ? songName : cur.title,
       artist: cur.artist ?? '',
       album: cur.album ?? '',
       lyric: _lastLyricText ?? '',
-      fullLyric: rawLrc,
+      fullLyric: carLrc,
+      vivoMediaId: vivoId,
     ));
   }
 
