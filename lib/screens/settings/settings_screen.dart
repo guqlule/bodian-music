@@ -33,8 +33,8 @@ String _carModeLabel(String mode) => switch (mode) {
 void _showCarModeSheet(BuildContext context, WidgetRef ref, String current) {
   const options = <(String, String, String)>[
     ('auto', '自动检测', '按已连接的车机类型自动选择'),
-    ('force', '强制车机模式', '标题保持歌名，歌词显示在副标题（Jovi InCar / HiCar）'),
-    ('off', '强制蓝牙模式', '标题显示歌词行（传统 AVRCP 车机）'),
+    ('force', '强制车机模式', '标题保持歌名，歌词写入标准字段（Jovi InCar 体验区投屏，不支持歌词）'),
+    ('off', '强制蓝牙模式', '标题显示歌词行（传统 AVRCP 车机，支持滚动歌词）'),
   ];
   showModalBottomSheet(
     context: context,
