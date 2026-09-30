@@ -112,6 +112,7 @@ class MediaSessionHelper(private val context: android.content.Context) {
             val artist = call.argument<String>("artist") ?: ""
             val album = call.argument<String>("album") ?: ""
             val lyric = call.argument<String>("lyric") ?: ""
+            val fullLyric = call.argument<String>("fullLyric") ?: ""
             val durationMs = call.argument<Number>("durationMs")?.toLong()
             val positionMs = call.argument<Number>("positionMs")?.toLong()
 
@@ -132,8 +133,14 @@ class MediaSessionHelper(private val context: android.content.Context) {
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
 
-            // 标准歌词 key。部分国产车机（含支持"蓝牙歌词"的 AVRCP 车机）读它显示歌词。
-            // 无条件写入：key 缺失时车机会直接判定"暂无歌词"。
+            // Jovi InCar 白名单三层通道：
+            //  - 第二层：ucar.media.metadata.LYRICS_WHOLE = 整首歌词，车机自己滚动
+            //  - 第三层：android.media.metadata.LYRIC      = 单行歌词
+            // 波点音乐不在第一层（网易云/QQ/酷我/酷狗）白名单，走第二层全文通道。
+            // 三种 key 都无条件写入，命中哪层都能显示；key 缺失会被判定"暂无歌词"。
+            builder.putString("ucar.media.metadata.LYRICS_WHOLE", fullLyric)
+            builder.putString("android.media.metadata.LYRIC", lyric)
+            // 兼容：部分车机认这个 key 读单行，必须是歌词行而非整首 LRC
             builder.putString("android.media.metadata.LYRICS", lyric)
 
             // 只在 durationMs 提供且有效时更新，否则保留 existing 的 duration
@@ -152,9 +159,11 @@ class MediaSessionHelper(private val context: android.content.Context) {
             // Jovi InCar 可能在 onMetadataChanged 回调里读 getExtras()，
             // 如果先 setMetadata 后 setExtras，Jovi 读到的还是旧 extras。
             val extras = android.os.Bundle().apply {
+                putString("ucar.media.metadata.LYRICS_WHOLE", fullLyric)
+                putString("android.media.metadata.LYRIC", lyric)
+                putString("android.media.metadata.LYRICS", lyric)
                 putString("lyric", lyric)
                 putString("lyrics", lyric)
-                putString("android.media.metadata.LYRICS", lyric)
             }
             session.setExtras(extras)
 

@@ -322,6 +322,10 @@ class PlayerService {
       _subscriptions.add(_lyricController.listen((data) {
         _mediaLyricLines = LyricParser.parse(data?['lyric'] ?? '');
         _lastMediaLyricIndex = -2; // 重置，触发更新
+        // Jovi InCar 第二层协议：车机主动读 ucar.media.metadata.LYRICS_WHOLE
+        // 通道里的**整首歌词**，然后自己滚动显示。
+        // 必须在歌词到达时就整段推上去，不能只推单行。
+        _mediaHandler?.pushFullLyric(data?['lyric'] ?? '');
       }));
     } catch (e) {
       logDebug('[MediaSession] 初始化失败: $e');

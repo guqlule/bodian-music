@@ -24,6 +24,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   String? _lastLyricText;
   String _baseSongTitle = '';
 
+  /// 整首歌词原文（LRC）。
+  /// Jovi InCar 第二层协议：车机读 ucar.media.metadata.LYRICS_WHOLE 拿全文自己滚动。
+  String _fullLyric = '';
+
   AudioPlayerHandler({
     required AudioPlayer player,
     required this.onPlayNext,
@@ -73,6 +77,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     if (line != null && line.isNotEmpty) {
       _lastLyricText = null;
       updateLyricLine(line);
+    }
+    if (_fullLyric.isNotEmpty) {
+      pushFullLyric(_fullLyric);
     }
   }
 
@@ -136,6 +143,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     }
     _baseMediaId = music.id;
     _baseSongTitle = music.name;
+    _fullLyric = '';
     _lastLyricText = null;
     _lastKnownLine = null;
     unawaited(refreshCarMode());
@@ -236,7 +244,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           extras: {
             'lyric': line ?? '',
             'lyrics': line ?? '',
-            'android.media.metadata.LYRICS': line ?? '',
+            'android.media.metadata.LYRIC': line ?? '',
+            // Jovi InCar 第二层：整首歌词，车机自己滚动（随歌词加载后由 pushFullLyric 写入）
+            if (_fullLyric.isNotEmpty) 'ucar.media.metadata.LYRICS_WHOLE': _fullLyric,
           },
         );
         mediaItem.add(_currentItem);
@@ -252,11 +262,44 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           lyric: text,
           durationMs: (dur ?? cur.duration)?.inMilliseconds,
           positionMs: _player.position.inMilliseconds,
+          fullLyric: _fullLyric,
         ),
         // Jovi InCar 可能从 PlaybackState extras 读歌词
         MediaSessionService().setPlaybackStateLyric(text),
       ]));
     } catch (_) {}
+  }
+
+  /// 推送整首歌词（LRC 原文）给车机。
+  ///
+  /// Jovi InCar 白名单分三层，波点音乐属第二层：
+  /// 车机主动读 `ucar.media.metadata.LYRICS_WHOLE` 通道拿**整首歌词**，
+  /// 然后自己按时间轴滚动显示。所以这里必须推全文，不能只推单行。
+  void pushFullLyric(String rawLrc) {
+    _fullLyric = rawLrc;
+    final prev = _currentItem;
+    if (prev == null) return;
+    try {
+      // 重建 MediaItem，保留已有 extras 并补上全文歌词
+      // （Jovi InCar 第二层通道：ucar.media.metadata.LYRICS_WHOLE = 整首歌词）
+      _currentItem = prev.copyWith(extras: {
+        ...?prev.extras,
+        'ucar.media.metadata.LYRICS_WHOLE': rawLrc,
+      });
+      mediaItem.add(_currentItem);
+    } catch (_) {}
+    // 同时写 session metadata + extras（MethodChannel 路径）
+    final cur = _currentItem;
+    if (cur == null) return;
+    unawaited(MediaSessionService().updateLyric(
+      title: _carMode
+          ? (_baseSongTitle.isEmpty ? cur.title : _baseSongTitle)
+          : (cur.title),
+      artist: cur.artist ?? '',
+      album: cur.album ?? '',
+      lyric: _lastLyricText ?? '',
+      fullLyric: rawLrc,
+    ));
   }
 
   Future<void> syncQueueToSystem(List<MusicInfo> playlist, int currentIndex) async {
