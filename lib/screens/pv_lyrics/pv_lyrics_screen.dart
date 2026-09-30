@@ -212,12 +212,31 @@ class _CoverPlaceholder extends StatelessWidget {
   }
 }
 
-/// 封面模糊背景
-class _BlurredCoverBackground extends ConsumerWidget {
+/// 封面模糊背景：重度模糊 + 缓慢漂移缩放，避免大面积静止显得单调
+class _BlurredCoverBackground extends ConsumerStatefulWidget {
   const _BlurredCoverBackground();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_BlurredCoverBackground> createState() =>
+      _BlurredCoverBackgroundState();
+}
+
+class _BlurredCoverBackgroundState
+    extends ConsumerState<_BlurredCoverBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _drift = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 24),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _drift.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final music = ref.watch(currentMusicProvider).valueOrNull;
     final artUrl = music?.imgUrl;
     final url = (music?.source == 'local' && artUrl != null)
@@ -228,21 +247,60 @@ class _BlurredCoverBackground extends ConsumerWidget {
       return const ColoredBox(color: Color(0xFF0B0B10));
     }
 
-    return ImageFiltered(
-      imageFilter: ui.ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-      child: Transform.scale(
-        scale: 1.35,
-        child: Image.network(
-          url,
-          fit: BoxFit.cover,
-          cacheWidth: 240,
-          errorBuilder: (_, __, ___) =>
-              const ColoredBox(color: Color(0xFF0B0B10)),
-          loadingBuilder: (context, child, progress) => progress == null
-              ? child
-              : const ColoredBox(color: Color(0xFF0B0B10)),
+    final isPlaying = ref.watch(isPlayingProvider).valueOrNull ?? false;
+    // 亮度随播放轻微起伏，模拟音乐律动（暂停时固定）
+    final t = isPlaying ? _drift.value : 0.5;
+    final glow = 0.05 + t * 0.05;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        AnimatedBuilder(
+          animation: _drift,
+          builder: (context, _) {
+            final k = isPlaying ? _drift.value : 0.5;
+            return Transform.scale(
+              scale: 1.32 + k * 0.10,
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+                child: Transform.scale(
+                  // 平移制造"照片在动"的感觉
+                  scale: 1.25,
+                  child: Transform.translate(
+                    offset: Offset((k - 0.5) * 26, (k - 0.5) * -18),
+                    child: Image.network(
+                      url,
+                      fit: BoxFit.cover,
+                      cacheWidth: 240,
+                      errorBuilder: (_, __, ___) =>
+                          const ColoredBox(color: Color(0xFF0B0B10)),
+                      loadingBuilder: (context, child, progress) =>
+                          progress == null
+                              ? child
+                              : const ColoredBox(color: Color(0xFF0B0B10)),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
         ),
-      ),
+        // 顶部微光晕，呼应歌词高光
+        IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(0, -0.45),
+                radius: 0.9,
+                colors: [
+                  Colors.white.withValues(alpha: glow),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

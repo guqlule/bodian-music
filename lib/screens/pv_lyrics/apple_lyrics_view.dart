@@ -356,14 +356,18 @@ class _AppleLyricsPainter extends CustomPainter {
   /// 关键：全白文字，只用 alpha 表达层次
   /// dark  = factor*0.2 + 0.2  → 0.2 ~ 0.4
   /// bright= factor*0.8 + 0.2  → 0.2 ~ 1.0
+  ///
+  /// 参考项目在开启模糊时清晰层 alpha 归零、只留预渲染的模糊位图（alpha 0.5）。
+  /// 这里没有预渲染位图，若沿用 0.2 会叠加成"看不清"，
+  /// 因此非当前行抬高到 0.42~0.5 区间，保证可读。
   double _darkFor(double scale) {
     final f = ((scale - inactiveScale) / (1.0 - inactiveScale)).clamp(0.0, 1.0);
-    return f * 0.2 + 0.2;
+    return f * 0.1 + 0.42; // 0.42 ~ 0.52
   }
 
   double _brightFor(double scale) {
     final f = ((scale - inactiveScale) / (1.0 - inactiveScale)).clamp(0.0, 1.0);
-    return f * 0.8 + 0.2;
+    return f * 0.8 + 0.2; // 0.2 ~ 1.0
   }
 
   @override
@@ -383,10 +387,12 @@ class _AppleLyricsPainter extends CustomPainter {
       final scale = i < scales.length ? scales[i].position : inactiveScale;
       final pivotY = y + lineH / 2;
 
-      // 非当前行：按行距分级模糊（σ = 1 + |Δline|，上限 10）
+      // 非当前行：按行距分级模糊。
+      // σ 上限收到 3.2：参考项目上限 10 是配合「清晰层 alpha 归零 + 模糊位图
+      // alpha 0.5」的替换式方案；这里没有模糊位图，σ 过大只会糊成一片看不见。
       if (!isActive) {
         final dist = (i - currentIndex).abs();
-        final sigma = (1.0 + dist).clamp(0.5, 10.0);
+        final sigma = (0.6 + dist * 0.7).clamp(0.6, 3.2);
         final rect = Rect.fromLTRB(0, y - sigma * 2, viewportW, y + lineH + sigma * 2);
         canvas.saveLayer(
           rect,
@@ -404,6 +410,7 @@ class _AppleLyricsPainter extends CustomPainter {
         tp: tp,
         paint: paint,
         line: lines[i],
+        lineIndex: i,
         y: y,
         isActive: isActive,
         scale: scale,
@@ -420,6 +427,7 @@ class _AppleLyricsPainter extends CustomPainter {
     required TextPainter tp,
     required Paint paint,
     required LyricLine line,
+    required int lineIndex,
     required double y,
     required bool isActive,
     required double scale,
@@ -434,20 +442,15 @@ class _AppleLyricsPainter extends CustomPainter {
 
     if (isActive && line.hasWords) {
       _paintWordByWord(canvas, line, y, maxW, dark, bright);
+    } else if (isActive) {
+      // 当前行 + 无逐字时间戳 → 用「行级进度」做扫光
+      // 行级 LRC 没有字级时间，但可以按本行已唱比例把亮区从左扫到右。
+      // 这与逐字模式视觉一致，只是扫过整行而非逐字。
+      final alpha = _lineSweepAlpha(line, lineIndex, bright, dark);
+      _paintLineText(canvas, tp, line, y, maxW, alpha.$1, alpha.$2);
     } else {
-      // 整行模式
-      final alpha = isActive ? bright : dark;
-      tp.text = TextSpan(
-        text: line.text,
-        style: TextStyle(
-          color: Colors.white.withValues(alpha: alpha),
-          fontSize: fontSize,
-          fontWeight: FontWeight.w600,
-          height: 1.35,
-        ),
-      );
-      tp.layout(maxWidth: maxW);
-      tp.paint(canvas, Offset(leftPadding, y + (fontSize * 1.35 - fontSize) / 2));
+      final alpha = dark;
+      _paintLineText(canvas, tp, line, y, maxW, alpha, alpha);
     }
 
     if (hasTrans && isActive) {
@@ -463,6 +466,83 @@ class _AppleLyricsPainter extends CustomPainter {
       tp.layout(maxWidth: maxW);
       tp.paint(canvas, Offset(leftPadding, y + fontSize * 1.5));
     }
+  }
+
+  /// 计算当前行的演唱进度 0~1
+  double _lineProgress(LyricLine line, int lineIndex) {
+    // 行结束时间 = 下一行开始时间（末行按 4 秒估算）
+    final end = (lineIndex + 1 < lines.length)
+        ? lines[lineIndex + 1].time
+        : line.time + const Duration(seconds: 4);
+    final total = end - line.time;
+    if (total.inMilliseconds <= 0) return 1.0;
+    final elapsed = position - line.time;
+    if (elapsed.inMilliseconds <= 0) return 0.0;
+    return (elapsed.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
+  }
+
+  /// 行级扫光：无逐字时间戳时，用本行进度把亮区从左扫到右。
+  ///
+  /// 返回值 (alphaLeft, alphaRight)：整行在播放头上取样两端，
+  /// 中间由 LinearGradient 插值，形成软边扫光。
+  (double, double) _lineSweepAlpha(LyricLine line, int lineIndex, double bright, double dark) {
+    final p = _lineProgress(line, lineIndex);
+    // 软带宽约为 3 个字符
+    final soft = 0.18;
+    final center = p;
+    double a(double x) {
+      final d = (x - center) / soft;
+      // smoothstep 过渡
+      final t = ((d + 1) / 2).clamp(0.0, 1.0);
+      final e = t * t * (3 - 2 * t);
+      return dark + (bright - dark) * e;
+    }
+
+    return (a(0.0), a(1.0));
+  }
+
+  /// 绘制整行文字，支持左右不同 alpha（扫光渐变）
+  void _paintLineText(
+    Canvas canvas,
+    TextPainter tp,
+    LyricLine line,
+    double y,
+    double maxW,
+    double alphaLeft,
+    double alphaRight,
+  ) {
+    final style = TextStyle(
+      fontSize: fontSize,
+      fontWeight: FontWeight.w600,
+      height: 1.35,
+    );
+    // 左右 alpha 不同 → 用渐变前景，否则纯色
+    if ((alphaLeft - alphaRight).abs() < 0.01) {
+      tp.text = TextSpan(
+        text: line.text,
+        style: style.copyWith(
+          color: Colors.white.withValues(alpha: alphaLeft),
+        ),
+      );
+    } else {
+      tp.text = TextSpan(text: line.text, style: style);
+      tp.layout(maxWidth: maxW);
+      final w = tp.width;
+      final shader = ui.Gradient.linear(
+        Offset(leftPadding, 0),
+        Offset(leftPadding + w, 0),
+        [
+          Colors.white.withValues(alpha: alphaLeft),
+          Colors.white.withValues(alpha: alphaRight),
+        ],
+      );
+      tp.text = TextSpan(
+        text: line.text,
+        style: style.copyWith(foreground: Paint()..shader = shader),
+      );
+    }
+    tp.layout(maxWidth: maxW);
+    tp.paint(canvas, Offset(leftPadding, y + (fontSize * 1.35 - fontSize) / 2));
   }
 
   /// 逐字歌词：连续 alpha 播放头 + 软过渡带
