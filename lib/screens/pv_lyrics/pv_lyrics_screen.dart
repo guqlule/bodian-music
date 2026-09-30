@@ -131,21 +131,13 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
               child: SafeArea(
                 child: Column(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.keyboard_arrow_down_rounded,
-                                size: 32, color: Colors.white70),
-                            onPressed: () => Navigator.pop(context),
-                          ),
-                        ],
-                      ),
-                    ),
+                    _buildTopBar(),
                     Expanded(
-                      child: Center(
-                        child: _buildLyric(),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Center(
+                          child: _buildLyric(),
+                        ),
                       ),
                     ),
                   ],
@@ -158,84 +150,230 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
     );
   }
 
+  Widget _buildTopBar() {
+    final music = ref.watch(currentMusicProvider).valueOrNull;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 20, 0),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                size: 32, color: Colors.white70),
+            onPressed: () => Navigator.pop(context),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  music?.name ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if ((music?.singer ?? '').isNotEmpty)
+                  Text(
+                    music!.singer,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLyric() {
     if (_currentLine == null) {
       final music = ref.read(currentMusicProvider).valueOrNull;
-      final hasArt = music?.imgUrl != null && music!.imgUrl!.isNotEmpty;
+      final artUrl = music?.imgUrl;
+      final hasArt = artUrl != null && artUrl.isNotEmpty;
+      // 歌名/歌手已在顶栏显示，这里只放封面 + 状态
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (hasArt)
             ClipRRect(
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(24),
               child: Image.network(
-                music!.imgUrl!,
-                width: 140,
-                height: 140,
+                artUrl,
+                width: 180,
+                height: 180,
                 fit: BoxFit.cover,
-                cacheWidth: 280,
+                cacheWidth: 360,
                 errorBuilder: (_, __, ___) => _placeholderArt(),
               ),
             )
           else
             _placeholderArt(),
-          const SizedBox(height: 18),
-          Text(music?.name ?? '', maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
-          if (music?.singer?.isNotEmpty == true) ...[
-            const SizedBox(height: 4),
-            Text(music!.singer, maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.white54, fontSize: 13)),
-          ],
-          const SizedBox(height: 14),
-          const Text('暂无歌词', style: TextStyle(fontSize: 14, color: Colors.white38)),
+          const SizedBox(height: 24),
+          Text(
+            '暂无歌词',
+            style: TextStyle(
+              fontSize: 15,
+              color: Colors.white.withValues(alpha: 0.35),
+              letterSpacing: 1,
+            ),
+          ),
         ],
       );
     }
 
-    final mainFontSize = 52.0;
+    return _buildLyricList();
+  }
+
+  /// 完整歌词列表：当前行居中放大，上下文歌词淡出。
+  /// 相比「只显示当前行 + 下一行」，信息量更丰富，也更贴合主流歌词页观感。
+  Widget _buildLyricList() {
+    final count = _parsedLyrics.length;
+    // 当前行固定在列表正中：索引 2
+    const centerSlot = 2;
+    // 上下各留几行，超出的裁掉
+    final start = (_currentIndex - centerSlot).clamp(0, count);
+    final end = (start + 5).clamp(0, count);
+    final visible = <int>[];
+    for (int i = start; i < end; i++) {
+      visible.add(i);
+    }
+
+    // 主歌词字号随文本长度自适应，长句自动缩小避免溢出
+    final cur = _currentLine!;
+    final curLen = cur.text.length;
+    final mainFontSize = curLen <= 8
+        ? 44.0
+        : curLen <= 14
+            ? 38.0
+            : curLen <= 20
+                ? 32.0
+                : 26.0;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _currentLine!.hasWords
-            ? _buildWordByWordText(_currentLine!, mainFontSize)
-            : LerpScanText(
-                text: _currentLine!.text,
-                progress: _currentProgress,
-                scannedColor: AppColors.primaryDark,
-                unscannedColor: Colors.white.withValues(alpha: 0.25),
-                fontSize: mainFontSize,
-                fontWeight: FontWeight.w900,
-              ),
-        if (_nextLine != null && _nextLine!.text.isNotEmpty) ...[
-          const SizedBox(height: 28),
-          Text(
-            _nextLine!.text,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: mainFontSize * 0.55,
-              fontWeight: FontWeight.w600,
-              color: Colors.white.withValues(alpha: 0.2),
-            ),
+        for (final i in visible)
+          _buildLine(
+            index: i,
+            mainFontSize: mainFontSize,
           ),
-        ],
       ],
+    );
+  }
+
+  Widget _buildLine({required int index, required double mainFontSize}) {
+    final line = _parsedLyrics[index];
+    final isCurrent = index == _currentIndex;
+    // 距离当前行越远越淡、越小
+    final dist = (index - _currentIndex).abs();
+
+    final double scale;
+    final double alpha;
+    if (isCurrent) {
+      scale = 1.0;
+      alpha = 1.0;
+    } else if (dist == 1) {
+      scale = 0.72;
+      alpha = 0.55;
+    } else if (dist == 2) {
+      scale = 0.6;
+      alpha = 0.3;
+    } else {
+      scale = 0.52;
+      alpha = 0.18;
+    }
+
+    final hasTranslation = line.translation != null && line.translation!.isNotEmpty;
+
+    Widget text;
+    if (isCurrent && line.hasWords) {
+      text = _buildWordByWordText(line, mainFontSize);
+    } else if (isCurrent) {
+      // 无逐字信息时用行级进度做卡拉OK扫光
+      text = LerpScanText(
+        text: line.text,
+        progress: _currentProgress,
+        scannedColor: AppColors.primaryDark,
+        unscannedColor: Colors.white.withValues(alpha: 0.3),
+        fontSize: mainFontSize,
+        fontWeight: FontWeight.w900,
+      );
+    } else {
+      text = Text(
+        line.text,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: isCurrent ? mainFontSize : mainFontSize * scale,
+          fontWeight: isCurrent ? FontWeight.w900 : FontWeight.w600,
+          height: 1.35,
+          color: Colors.white.withValues(alpha: alpha),
+          shadows: isCurrent
+              ? [
+                  Shadow(
+                    color: AppColors.primaryDark.withValues(alpha: 0.5),
+                    blurRadius: 24,
+                  ),
+                ]
+              : null,
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => ref.read(playerServiceProvider).seek(line.time),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: EdgeInsets.symmetric(vertical: isCurrent ? 6 : 3, horizontal: 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeOutCubic,
+              style: const TextStyle(),
+              child: text,
+            ),
+            if (hasTranslation)
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Text(
+                  line.translation!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: (isCurrent ? mainFontSize * 0.34 : 12),
+                    fontWeight: FontWeight.w500,
+                    height: 1.3,
+                    color: Colors.white.withValues(alpha: alpha * 0.6),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _placeholderArt() {
     return Container(
-      width: 140,
-      height: 140,
+      width: 180,
+      height: 180,
       decoration: BoxDecoration(
-        color: AppColors.primarySoftColor,
-        borderRadius: BorderRadius.circular(20),
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(24),
       ),
       alignment: Alignment.center,
-      child: Icon(Icons.music_note_rounded, color: AppColors.primary, size: 56),
+      child: Icon(Icons.music_note_rounded, color: Colors.white24, size: 72),
     );
   }
 
@@ -261,10 +399,26 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
             : 1.0;
       }
 
-      final color = Color.lerp(AppColors.primaryDark, Colors.white.withValues(alpha: 0.25), 1.0 - wordProgress)!;
-      final shadow = wordProgress > 0.5
+      // 已唱部分：主题色 + 辉光；未唱部分：淡白
+      final sung = Color.lerp(
+        AppColors.primaryDark,
+        Colors.white,
+        wordProgress * 0.15,
+      )!;
+      final unsung = Colors.white.withValues(alpha: 0.28);
+      final color = Color.lerp(unsung, sung, wordProgress)!;
+
+      final shadow = wordProgress > 0.05
           ? [
-              Shadow(color: AppColors.primaryDark.withValues(alpha: wordProgress * 0.7), blurRadius: 20 * wordProgress),
+              Shadow(
+                color: AppColors.primaryDark.withValues(alpha: 0.75 * wordProgress),
+                blurRadius: 26 * wordProgress,
+              ),
+              Shadow(
+                color: AppColors.primary.withValues(alpha: 0.35 * wordProgress),
+                blurRadius: 8 * wordProgress,
+                offset: const Offset(0, 2),
+              ),
             ]
           : null;
 
@@ -272,7 +426,8 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
         text: word.text,
         style: TextStyle(
           color: color,
-          fontSize: fontSize + wordProgress * 4,
+          fontSize: fontSize,
+          height: 1.3,
           fontWeight: FontWeight.w900,
           shadows: shadow,
         ),
@@ -285,7 +440,7 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
       textAlign: TextAlign.center,
       text: TextSpan(
         children: spans,
-        style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w900),
+        style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w900, height: 1.3),
       ),
     );
   }
