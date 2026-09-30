@@ -2,6 +2,7 @@ import 'dart:convert';
 import '../../core/utils/logger.dart';
 import 'package:http/http.dart' as http;
 import '../../models/music_model.dart';
+import '../lyric/krc_decoder.dart';
 
 const _uaDesktop = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
@@ -216,27 +217,58 @@ class LyricApiService {
     final accessKey = first['accesskey'];
     logDebug('[LyricApi] KG: 找到歌词 id=$lrcId');
 
-    // 下载歌词
-    final downloadData = await _httpGetJson(
-      Uri.parse(
-        'https://lyrics.kugou.com/download?ver=1&client=pc'
-        '&id=$lrcId&accesskey=$accessKey&fmt=lrc&charset=utf8',
-      ),
-      tag: 'KG',
-    );
-    if (downloadData == null) return null;
-
-    final content = downloadData['content'] as String?;
-    if (content == null || content.isEmpty) {
-      logDebug('[LyricApi] KG: content为空');
-      return null;
+    // 优先请求 KRC（逐字歌词），失败降级 LRC（行级）
+    // KRC = base64 → skip 4B → XOR 固定 16B 密钥 → zlib 解压
+    final krc = await _downloadKg('krc', lrcId, accessKey);
+    if (krc != null && krc.trim().isNotEmpty) {
+      logDebug('[LyricApi] KG: KRC 逐字歌词成功，长度=${krc.length}');
+      return {'lyric': krc, 'tlyric': null, 'krc': '1'};
     }
 
-    // Base64 解码
-    final lyric = utf8.decode(base64Decode(content));
-    if (lyric.isEmpty) return null;
-    logDebug('[LyricApi] KG: 成功，歌词长度=${lyric.length}');
-    return {'lyric': lyric, 'tlyric': null};
+    final lrc = await _downloadKg('lrc', lrcId, accessKey);
+    if (lrc == null || lrc.trim().isEmpty) {
+      logDebug('[LyricApi] KG: 歌词获取失败');
+      return null;
+    }
+    logDebug('[LyricApi] KG: LRC 行级歌词成功，长度=${lrc.length}');
+    return {'lyric': lrc, 'tlyric': null};
+  }
+
+  /// 下载酷狗歌词并解密。
+  /// fmt=krc 时走 KRC 解密流程；fmt=lrc 时仅 base64 解码。
+  Future<String?> _downloadKg(
+    String fmt,
+    Object lrcId,
+    Object accessKey,
+  ) async {
+    try {
+      final data = await _httpGetJson(
+        Uri.parse(
+          'https://lyrics.kugou.com/download?ver=1&client=pc'
+          '&id=$lrcId&accesskey=$accessKey&fmt=$fmt&charset=utf8',
+        ),
+        tag: 'KG',
+      );
+      if (data == null) return null;
+
+      final content = data['content'] as String?;
+      if (content == null || content.isEmpty) return null;
+
+      if (fmt == 'krc') {
+        return KrcDecoder.decode(content);
+      }
+      // lrc：仅 base64
+      return utf8.decode(base64Decode(_padBase64(content)));
+    } catch (e) {
+      logDebug('[LyricApi] KG: $fmt 下载失败: $e');
+      return null;
+    }
+  }
+
+  static String _padBase64(String s) {
+    final t = s.trim();
+    final pad = (4 - t.length % 4) % 4;
+    return pad == 0 ? t : t + ('=' * pad);
   }
 
   // ==================== 跨源兜底：网易云歌词搜索 ====================

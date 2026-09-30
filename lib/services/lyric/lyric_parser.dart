@@ -1,5 +1,8 @@
 
 
+import 'krc_parser.dart';
+import 'qrc_parser.dart';
+
 /// 单个字/词，带独立时间戳（逐字歌词用）
 class LyricWord {
   final Duration time;
@@ -40,6 +43,18 @@ class LyricParser {
 
   static List<LyricLine> parse(String lyricText) {
     if (lyricText.isEmpty) return [];
+
+    // 逐字格式走各自解析器；其余（LRC / ELRC）走下面的通用解析。
+    // 顺序很重要：QRC 与 KRC 行首都是 `[数字,数字]`，会互相误判。
+    // QRC 检测更严格（必须含 `(数字,数字)` 词标签），所以先判 QRC。
+    if (QrcParser.isQrc(lyricText)) {
+      final qrcLines = QrcParser.parse(lyricText);
+      if (qrcLines.isNotEmpty) return qrcLines;
+    }
+    if (KrcParser.isKrc(lyricText)) {
+      final krcLines = KrcParser.parse(lyricText);
+      if (krcLines.isNotEmpty) return krcLines;
+    }
 
     final List<LyricLine> lines = [];
     final Map<String, String> tags = {};
