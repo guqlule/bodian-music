@@ -132,12 +132,15 @@ class MediaSessionHelper(private val context: android.content.Context) {
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, title)
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, lyric)
 
-            // 部分国产车机（尤其是支持"蓝牙歌词"的车机）读取自定义 LYRICS 字段显示歌词。
-            // 使用标准 key "android.media.metadata.LYRICS"，该 key 在 MediaMetadataCompat 中
-            // 未定义常量但底层 Bundle 支持任意字符串 key。
-            if (lyric.isNotEmpty()) {
-                builder.putString("android.media.metadata.LYRICS", lyric)
-            }
+            // 投屏车机（Jovi InCar / HiCar）的歌词字段各家命名不一，
+            // 且无法在车上抓包定位，所以把所有常见 key 都写一遍。
+            // key 必须始终存在（即使为空），否则车机可能因为读不到 key 而显示"暂无歌词"。
+            builder.putString("android.media.metadata.LYRICS", lyric)
+            builder.putString("LYRICS", lyric)
+            builder.putString("lyric", lyric)
+            builder.putString("lyrics", lyric)
+            builder.putString("lyric_line", lyric)
+            builder.putString("current_lyric", lyric)
 
             // 只在 durationMs 提供且有效时更新，否则保留 existing 的 duration
             if (durationMs != null && durationMs > 0) {
@@ -157,6 +160,9 @@ class MediaSessionHelper(private val context: android.content.Context) {
             val extras = android.os.Bundle().apply {
                 putString("lyric", lyric)
                 putString("lyrics", lyric)
+                putString("lyric_line", lyric)
+                putString("current_lyric", lyric)
+                putString("LYRICS", lyric)
                 putString("android.media.metadata.LYRICS", lyric)
                 putString("displayDescription", lyric)
             }

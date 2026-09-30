@@ -213,26 +213,36 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       if (_carMode) {
         // 车机/投屏模式（Jovi InCar / HiCar）
         //
-        // dumpsys notification 实测 QQ 音乐的字段分配：
-        //   android.title = 歌名
-        //   android.text  = 歌手 - 歌名
-        // Jovi 首页卡片读的是**通知**而不是 session metadata，
-        // 所以歌词必须写进 artist（audio_service 用它填 android.text），
-        // title 保持歌名，否则卡片标题会一直跳歌词。
+        // 照片实证（Jovi InCar 首页卡片）：
+        //   主标题   = 光年之外   ← 歌名（正确）
+        //   副标题   = 光年之外   ← 专辑名（我们写的是"歌手 · 专辑"）
+        //   歌词区   = 暂无歌词
+        // 说明卡片主标题=title ✓，但副标题它读的是别的字段，
+        // 歌词区则完全没读到 → 它读的是**专用歌词字段**。
+        //
+        // 投屏车机的歌词字段各家命名不一（LYRICS / lyric / lyrics /
+        // DISPLAY_DESCRIPTION / notification text…），且无法在车上抓包，
+        // 所以车机模式把歌词写进**所有**可能的位置。
+        // 蓝牙模式不受影响（那里 title 才是关键）。
         _currentItem = MediaItem(
           id: _baseMediaId,
           title: songTitle,
+          // 通知 android.text / session artist
           artist: hasLine ? line : (cur.artist ?? ''),
           album: cur.album ?? '',
           artUri: cur.artUri,
           duration: dur ?? cur.duration,
           displayTitle: songTitle,
-          displaySubtitle: cur.artist ?? '',
+          displaySubtitle: hasLine ? line : (cur.artist ?? ''),
           displayDescription: hasLine ? line : (cur.album ?? ''),
           extras: {
             'lyric': line ?? '',
             'lyrics': line ?? '',
+            'lyric_line': line ?? '',
+            'current_lyric': line ?? '',
             'android.media.metadata.LYRICS': line ?? '',
+            'LYRICS': line ?? '',
+            'displayDescription': line ?? '',
           },
         );
         mediaItem.add(_currentItem);
