@@ -231,9 +231,18 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
     return _buildLyricList();
   }
 
-  /// 完整歌词列表：当前行居中放大，上下文歌词淡出。
-  /// 相比「只显示当前行 + 下一行」，信息量更丰富，也更贴合主流歌词页观感。
+  /// 歌词列表容器。
+  ///
+  /// 窗口化列表（只渲染当前行附近几行）内容是瞬时替换的，
+  /// 这里叠加一层「换行时的轻微上下位移」作为过渡，让行切换有滑动感。
   Widget _buildLyricList() {
+    return _LineShiftTransition(
+      token: _currentIndex,
+      child: _buildLyricRows(),
+    );
+  }
+
+  Widget _buildLyricRows() {
     final count = _parsedLyrics.length;
     // 当前行固定在列表正中：索引 2
     const centerSlot = 2;
@@ -260,107 +269,39 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
       mainAxisSize: MainAxisSize.min,
       children: [
         for (final i in visible)
-          _buildLine(
+          // key 保证行在树中的位置稳定，让 AnimatedSize/Opacity 平滑过渡
+          _AnimatedLyricRow(
+            key: ValueKey(i),
             index: i,
+            line: _parsedLyrics[i],
+            isCurrent: i == _currentIndex,
+            distance: (i - _currentIndex).abs(),
             mainFontSize: mainFontSize,
+            onSeek: (t) => ref.read(playerServiceProvider).seek(t),
+            child: i == _currentIndex && _parsedLyrics[i].hasWords
+                ? _buildWordByWordText(_parsedLyrics[i], mainFontSize)
+                : i == _currentIndex
+                    ? LerpScanText(
+                        text: _parsedLyrics[i].text,
+                        progress: _currentProgress,
+                        scannedColor: AppColors.primaryDark,
+                        unscannedColor: Colors.white.withValues(alpha: 0.3),
+                        fontSize: mainFontSize,
+                        fontWeight: FontWeight.w900,
+                      )
+                    : Text(
+                        _parsedLyrics[i].text,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: mainFontSize,
+                          fontWeight: FontWeight.w600,
+                          height: 1.35,
+                        ),
+                      ),
           ),
       ],
-    );
-  }
-
-  Widget _buildLine({required int index, required double mainFontSize}) {
-    final line = _parsedLyrics[index];
-    final isCurrent = index == _currentIndex;
-    // 距离当前行越远越淡、越小
-    final dist = (index - _currentIndex).abs();
-
-    final double scale;
-    final double alpha;
-    if (isCurrent) {
-      scale = 1.0;
-      alpha = 1.0;
-    } else if (dist == 1) {
-      scale = 0.72;
-      alpha = 0.55;
-    } else if (dist == 2) {
-      scale = 0.6;
-      alpha = 0.3;
-    } else {
-      scale = 0.52;
-      alpha = 0.18;
-    }
-
-    final hasTranslation = line.translation != null && line.translation!.isNotEmpty;
-
-    Widget text;
-    if (isCurrent && line.hasWords) {
-      text = _buildWordByWordText(line, mainFontSize);
-    } else if (isCurrent) {
-      // 无逐字信息时用行级进度做卡拉OK扫光
-      text = LerpScanText(
-        text: line.text,
-        progress: _currentProgress,
-        scannedColor: AppColors.primaryDark,
-        unscannedColor: Colors.white.withValues(alpha: 0.3),
-        fontSize: mainFontSize,
-        fontWeight: FontWeight.w900,
-      );
-    } else {
-      text = Text(
-        line.text,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontSize: isCurrent ? mainFontSize : mainFontSize * scale,
-          fontWeight: isCurrent ? FontWeight.w900 : FontWeight.w600,
-          height: 1.35,
-          color: Colors.white.withValues(alpha: alpha),
-          shadows: isCurrent
-              ? [
-                  Shadow(
-                    color: AppColors.primaryDark.withValues(alpha: 0.5),
-                    blurRadius: 24,
-                  ),
-                ]
-              : null,
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: () => ref.read(playerServiceProvider).seek(line.time),
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: EdgeInsets.symmetric(vertical: isCurrent ? 6 : 3, horizontal: 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 350),
-              curve: Curves.easeOutCubic,
-              style: const TextStyle(),
-              child: text,
-            ),
-            if (hasTranslation)
-              Padding(
-                padding: const EdgeInsets.only(top: 3),
-                child: Text(
-                  line.translation!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: (isCurrent ? mainFontSize * 0.34 : 12),
-                    fontWeight: FontWeight.w500,
-                    height: 1.3,
-                    color: Colors.white.withValues(alpha: alpha * 0.6),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -601,4 +542,151 @@ class _Meteor {
     1.0 + r.nextDouble() * 2.0,
     0.4 + r.nextDouble() * 0.4,
   );
+}
+
+/// 歌词换行时的轻微上下位移过渡。
+///
+/// 窗口化列表是瞬时替换内容的，这里在换行瞬间给一个短促的位移回弹，
+/// 补足「滑动」感知（逐行缩放淡入淡出由 [_AnimatedLyricRow] 负责）。
+class _LineShiftTransition extends StatefulWidget {
+  final int token;
+  final Widget child;
+  const _LineShiftTransition({required this.token, required this.child});
+
+  @override
+  State<_LineShiftTransition> createState() => _LineShiftTransitionState();
+}
+
+class _LineShiftTransitionState extends State<_LineShiftTransition>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+  );
+
+  @override
+  void didUpdateWidget(covariant _LineShiftTransition old) {
+    super.didUpdateWidget(old);
+    if (old.token != widget.token) {
+      _ctrl.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 从轻微下方/上方滑入，落定后归位
+    final anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
+    return AnimatedBuilder(
+      animation: anim,
+      builder: (context, child) {
+        final t = anim.value;
+        final offset = (1 - t) * 14.0;
+        return Transform.translate(
+          offset: Offset(0, offset),
+          child: Opacity(opacity: 0.35 + 0.65 * t, child: child),
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
+
+/// 单行歌词的动画容器。
+///
+/// 逐行做「缩放 + 透明度 + 垂直位移」的补间，行切换时不是瞬变，
+/// 而是平滑过渡。当前行放大满亮并带辉光，上下文行缩小淡出。
+class _AnimatedLyricRow extends StatelessWidget {
+  final int index;
+  final LyricLine line;
+  final bool isCurrent;
+  final int distance;
+  final double mainFontSize;
+  final ValueChanged<Duration> onSeek;
+  final Widget child;
+
+  const _AnimatedLyricRow({
+    super.key,
+    required this.index,
+    required this.line,
+    required this.isCurrent,
+    required this.distance,
+    required this.mainFontSize,
+    required this.onSeek,
+    required this.child,
+  });
+
+  /// 与当前行的距离 → (缩放, 透明度)
+  (double, double) _emphasis() {
+    if (isCurrent) return (1.0, 1.0);
+    if (distance <= 1) return (0.78, 0.5);
+    if (distance == 2) return (0.66, 0.28);
+    return (0.58, 0.15);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (scale, alpha) = _emphasis();
+    final hasTranslation = line.translation != null && line.translation!.isNotEmpty;
+
+    return GestureDetector(
+      onTap: () => onSeek(line.time),
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 480),
+        curve: Curves.easeOutCubic,
+        padding: EdgeInsets.symmetric(
+          vertical: isCurrent ? 8 : 3,
+          horizontal: 24,
+        ),
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 420),
+          curve: Curves.easeOut,
+          opacity: alpha,
+          child: AnimatedScale(
+            duration: const Duration(milliseconds: 480),
+            curve: Curves.easeOutBack,
+            scale: scale,
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 逐字/扫光文本自带颜色，这里只给非当前行统一上色
+                isCurrent
+                    ? child
+                    : DefaultTextStyle.merge(
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: mainFontSize,
+                        ),
+                        child: child,
+                      ),
+                if (hasTranslation)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      line.translation!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: isCurrent ? mainFontSize * 0.32 : 11,
+                        fontWeight: FontWeight.w500,
+                        height: 1.3,
+                        color: Colors.white.withValues(alpha: isCurrent ? 0.55 : 0.4),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
