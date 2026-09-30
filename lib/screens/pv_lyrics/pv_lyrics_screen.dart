@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import '../../core/theme/app_theme.dart';
 import '../../providers/app_providers.dart';
 import '../../services/audio/audio_analysis_service.dart';
@@ -19,8 +21,6 @@ class PvLyricsScreen extends ConsumerStatefulWidget {
 class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _bgController;
-  final List<_Meteor> _meteors = [];
-  final _random = Random();
   List<LyricLine> _parsedLyrics = [];
   LyricLine? _currentLine;
   LyricLine? _nextLine;
@@ -30,6 +30,18 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
   List<double> _frequencies = [];
   Duration _position = Duration.zero;
 
+  // 音乐能量（用于背景呼吸与光带）
+  double _bass = 0;
+  double _mid = 0;
+  double _treble = 0;
+  double _beat = 0;
+
+  // 封面主色（HSL 色相 0~1），用于背景配色
+  double? _coverHue;
+  double _coverSaturation = 0.5;
+  String _coverUrl = '';
+  String? _lastMusicId;
+
   @override
   void initState() {
     super.initState();
@@ -37,14 +49,20 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
       vsync: this,
       duration: const Duration(hours: 1),
     )..repeat();
-    for (int i = 0; i < 12; i++) {
-      _meteors.add(_Meteor.random(_random));
-    }
     _spectrumSub = ref.read(audioAnalysisProvider).spectrumStream.listen((data) {
-      if (mounted) setState(() => _frequencies = data.frequencies);
+      if (mounted) {
+        setState(() {
+          _frequencies = data.frequencies;
+          _bass = data.bass;
+          _mid = data.mid;
+          _treble = data.treble;
+          _beat = data.beat;
+        });
+      }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initLyric();
+      _syncCoverColor();
     });
   }
 
@@ -53,6 +71,120 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
     final lyricText = lyricMap?['lyric'] ?? '';
     if (lyricText.isNotEmpty) {
       _parsedLyrics = LyricParser.parse(lyricText);
+    }
+  }
+
+  /// 从封面图取主色，作为背景配色，让背景跟歌曲对应而不是随机变色。
+  /// 用 dart:ui 的 instantiateImageCodec 解码（无需额外依赖），
+  /// 降采样后统计高饱和像素的色相分布，取众数。
+  Future<void> _syncCoverColor() async {
+    final music = ref.read(currentMusicProvider).valueOrNull;
+    var url = music?.imgUrl;
+    if (music?.source == 'local' && url != null) url = Uri.file(url).toString();
+    if (url == null || url.isEmpty || url == _coverUrl) return;
+    _coverUrl = url;
+
+    try {
+      final hue = await _extractDominantHue(url);
+      if (!mounted || hue == null) return;
+      setState(() {
+        _coverHue = hue.hue;
+        _coverSaturation = hue.saturation.clamp(0.25, 0.75);
+      });
+    } catch (_) {
+      // 封面加载失败则保持默认配色
+    }
+  }
+
+  /// 采样封面像素，返回主色相与平均饱和度
+  Future<({double hue, double saturation})?> _extractDominantHue(String url) async {
+    final data = await _loadBytes(url);
+    if (data == null) return null;
+
+    final codec = await ui.instantiateImageCodec(data, targetWidth: 32);
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+    try {
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (byteData == null) return null;
+      final bytes = byteData.buffer.asUint8List();
+
+      // 色相直方图（36 个桶）
+      const buckets = 36;
+      final hist = List<int>.filled(buckets, 0);
+      final satSum = List<double>.filled(buckets, 0);
+      final count = List<int>.filled(buckets, 0);
+
+      for (int i = 0; i + 3 < bytes.length; i += 4) {
+        final r = bytes[i] / 255.0;
+        final g = bytes[i + 1] / 255.0;
+        final b = bytes[i + 2] / 255.0;
+        // 跳过过暗/过亮的像素（黑底、白底封面无主色意义）
+        final maxC = [r, g, b].reduce((a, b) => a > b ? a : b);
+        final minC = [r, g, b].reduce((a, b) => a < b ? a : b);
+        if (maxC < 0.12 || maxC > 0.97) continue;
+        final sat = maxC == 0 ? 0.0 : (maxC - minC) / maxC;
+        if (sat < 0.12) continue;
+
+        // RGB → HSV 色相
+        final d = maxC - minC;
+        if (d == 0) continue;
+        var h = 0.0;
+        if (maxC == r) {
+          h = 60 * (((g - b) / d) % 6);
+        } else if (maxC == g) {
+          h = 60 * (((b - r) / d) + 2);
+        } else {
+          h = 60 * (((r - g) / d) + 4);
+        }
+        if (h < 0) h += 360;
+
+        final bucket = (h / 10).floor().clamp(0, buckets - 1);
+        // 按饱和度加权，鲜艳的颜色更可能是主色
+        hist[bucket] += 1;
+        satSum[bucket] += sat;
+        count[bucket] += 1;
+      }
+
+      var best = -1;
+      var bestScore = 0;
+      for (int i = 0; i < buckets; i++) {
+        if (hist[i] == 0) continue;
+        // 相邻桶合并投票，避免色相分界处被切开
+        final prev = hist[(i - 1 + buckets) % buckets];
+        final next = hist[(i + 1) % buckets];
+        final score = hist[i] * 2 + prev + next;
+        if (score > bestScore) {
+          bestScore = score;
+          best = i;
+        }
+      }
+      if (best < 0) return null;
+
+      return (
+        hue: (best * 10 + 5) / 360.0,
+        saturation: satSum[best] / count[best],
+      );
+    } finally {
+      image.dispose();
+      codec.dispose();
+    }
+  }
+
+  Future<Uint8List?> _loadBytes(String url) async {
+    try {
+      if (url.startsWith('http')) {
+        final resp = await http.get(Uri.parse(url));
+        if (resp.statusCode == 200) return resp.bodyBytes;
+        return null;
+      }
+      if (url.startsWith('file://')) {
+        final f = File.fromUri(Uri.parse(url));
+        if (await f.exists()) return f.readAsBytes();
+      }
+      return null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -113,6 +245,14 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
       }
     });
 
+    // 切歌时重新提取封面主色，背景跟着换歌换色
+    final musicId = ref.watch(currentMusicProvider).valueOrNull?.id;
+    if (musicId != _lastMusicId) {
+      _lastMusicId = musicId;
+      _coverUrl = ''; // 强制重新取色
+      unawaited(_syncCoverColor());
+    }
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
@@ -123,9 +263,14 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
             return CustomPaint(
               painter: _BgPainter(
                 time: _bgController.value,
-                meteors: _meteors,
                 isPlaying: isPlaying,
+                bass: _bass,
+                mid: _mid,
+                treble: _treble,
+                beat: _beat,
                 frequencies: _frequencies,
+                coverHue: _coverHue,
+                coverSaturation: _coverSaturation,
               ),
               size: Size.infinite,
               child: SafeArea(
@@ -389,159 +534,181 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen>
 
 class _BgPainter extends CustomPainter {
   final double time;
-  final List<_Meteor> meteors;
   final bool isPlaying;
+  final double bass;
+  final double mid;
+  final double treble;
+  final double beat;
   final List<double> frequencies;
+  /// 封面主色（HSL 色相 0~1），无封面时用默认值
+  final double? coverHue;
+  final double coverSaturation;
 
-  _BgPainter({required this.time, required this.meteors, required this.isPlaying, this.frequencies = const []});
+  _BgPainter({
+    required this.time,
+    required this.isPlaying,
+    this.bass = 0,
+    this.mid = 0,
+    this.treble = 0,
+    this.beat = 0,
+    this.frequencies = const [],
+    this.coverHue,
+    this.coverSaturation = 0.45,
+  });
+
+  /// 主色相：优先取封面主色，缓慢跟随音乐轻微呼吸（不随时间乱转色相）
+  double get _hue {
+    final base = coverHue ?? 0.62;
+    return (base + sin(time * 0.08) * 0.02) % 1.0;
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
-    final hue = (220 + time * 60) % 360;
+    final hue = _hue;
+    final energy = (bass * 0.6 + mid * 0.3 + treble * 0.1).clamp(0.0, 1.0);
 
-    // 背景
-    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()
-      ..shader = ui.Gradient.linear(Offset(0, 0), Offset(0, h), [
-        HSLColor.fromAHSL(1.0, hue, 0.3, 0.04).toColor(),
-        HSLColor.fromAHSL(1.0, (hue + 30) % 360, 0.35, 0.03).toColor(),
-        HSLColor.fromAHSL(1.0, (hue + 60) % 360, 0.3, 0.06).toColor(),
-      ], [0.0, 0.5, 1.0]));
-
-    // 星空
-    _drawStars(canvas, w, h, hue);
-
-    // 流星
-    _drawMeteors(canvas, w, h, hue);
-
-    // 频谱
-    _drawAurora(canvas, w, h, hue);
-
-    // 底部渐隐
-    canvas.drawRect(Rect.fromLTWH(0, h * 0.85, w, h * 0.15), Paint()
-      ..shader = ui.Gradient.linear(Offset(0, h * 0.85), Offset(0, h), [
-        Colors.transparent,
-        HSLColor.fromAHSL(1.0, hue, 0.3, 0.06).toColor().withValues(alpha: 0.8),
-      ]));
-  }
-
-  void _drawStars(Canvas canvas, double w, double h, double hue) {
-    final starPaint = Paint();
-    final starPositions = [
-      Offset(0.1, 0.15), Offset(0.25, 0.08), Offset(0.4, 0.2), Offset(0.55, 0.12),
-      Offset(0.7, 0.18), Offset(0.85, 0.1), Offset(0.15, 0.35), Offset(0.35, 0.3),
-      Offset(0.5, 0.38), Offset(0.65, 0.28), Offset(0.8, 0.35), Offset(0.9, 0.25),
-      Offset(0.05, 0.55), Offset(0.2, 0.5), Offset(0.45, 0.55), Offset(0.6, 0.48),
-      Offset(0.75, 0.52), Offset(0.95, 0.45), Offset(0.1, 0.7), Offset(0.3, 0.65),
-      Offset(0.5, 0.72), Offset(0.7, 0.68), Offset(0.88, 0.72),
-    ];
-    for (int i = 0; i < starPositions.length; i++) {
-      final pos = starPositions[i];
-      final twinkle = sin(time * (1.5 + i * 0.3) + i * 2.1) * 0.4 + 0.6;
-      final size = 1.0 + (i % 3) * 0.5;
-      starPaint.color = HSLColor.fromAHSL(1.0, (hue + i * 15) % 360, 0.2, 0.8)
-          .toColor().withValues(alpha: twinkle * 0.6);
-      canvas.drawCircle(Offset(pos.dx * w, pos.dy * h), size, starPaint);
-    }
-  }
-
-  void _drawMeteors(Canvas canvas, double w, double h, double hue) {
-    final meteorPaint = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
-    for (int i = 0; i < meteors.length; i++) {
-      final m = meteors[i];
-      final cycleDuration = m.speed;
-      final t = (time * cycleDuration + m.delay) % 1.0;
-      if (t > 0.8) continue;
-      final progress = t / 0.8;
-      final mx = m.startX * w + progress * m.dx * w;
-      final my = m.startY * h + progress * m.dy * h;
-      final tailLen = 40.0 + m.size * 20;
-      final alpha = sin(progress * pi) * m.brightness;
-      if (alpha < 0.01) continue;
-      final meteorHue = (hue + i * 30) % 360;
-      final color = HSLColor.fromAHSL(1.0, meteorHue, 0.6, 0.7).toColor();
-      final tailX = mx - m.dx * tailLen / w;
-      final tailY = my - m.dy * tailLen / h;
-      meteorPaint.shader = ui.Gradient.linear(
-        Offset(mx, my), Offset(tailX * w, tailY * h),
-        [
-          color.withValues(alpha: alpha),
-          color.withValues(alpha: alpha * 0.3),
-          Colors.transparent,
-        ],
-        [0.0, 0.4, 1.0],
-      );
-      canvas.drawLine(Offset(mx, my), Offset(tailX * w, tailY * h), meteorPaint);
-      // 头部发光
-      meteorPaint.shader = null;
-      meteorPaint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
-      meteorPaint.color = color.withValues(alpha: alpha * 0.8);
-      canvas.drawCircle(Offset(mx, my), m.size * 2, meteorPaint);
-      meteorPaint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
-    }
-  }
-
-  void _drawAurora(Canvas canvas, double w, double h, double hue) {
-    final auroraPaint = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 30);
-    for (int i = 0; i < 4; i++) {
-      final path = Path();
-      final baseY = h * 0.55 + i * h * 0.08;
-      final amplitude = h * 0.08 * (1 + sin(time * 0.3 + i) * 0.4);
-      final frequency = 0.003 + i * 0.001;
-      final phaseShift = time * 0.4 + i * 1.2;
-      path.moveTo(0, baseY);
-      for (double x = 0; x <= w; x += 3) {
-        final y = baseY + sin(x * frequency + phaseShift) * amplitude
-            + cos(x * frequency * 1.5 + phaseShift * 0.7) * amplitude * 0.4;
-        path.lineTo(x, y);
-      }
-      path.lineTo(w, h);
-      path.lineTo(0, h);
-      path.close();
-      final auroraHue = (hue + i * 40 + 120) % 360;
-      final alpha = 0.08 + sin(time * 0.5 + i * 0.8) * 0.04;
-      auroraPaint.shader = ui.Gradient.linear(
-        Offset(0, baseY - amplitude), Offset(0, h),
-        [
-          HSLColor.fromAHSL(1.0, auroraHue, 0.7, 0.45).toColor().withValues(alpha: alpha),
-          HSLColor.fromAHSL(1.0, (auroraHue + 20) % 360, 0.6, 0.35).toColor().withValues(alpha: alpha * 0.5),
-          Colors.transparent,
-        ],
-        [0.0, 0.6, 1.0],
-      );
-      canvas.drawPath(path, auroraPaint);
-    }
-    // 顶部光晕
-    final glowPaint = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50);
-    final glowY = h * 0.6 + sin(time * 0.2) * h * 0.05;
-    glowPaint.shader = ui.Gradient.radial(
-      Offset(w * 0.5, glowY), w * 0.5, [
-        HSLColor.fromAHSL(1.0, (hue + 150) % 360, 0.6, 0.4).toColor().withValues(alpha: 0.08),
-        Colors.transparent,
-      ], [0.0, 1.0],
+    // 1) 底层：从封面色派生的深色渐变，越靠近歌词区越暗，保证文字可读
+    final light = 0.045 + energy * 0.02;
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          Offset(0, 0),
+          Offset(0, h),
+          [
+            HSLColor.fromAHSL(1.0, (hue + 0.03) % 1.0, coverSaturation * 0.5, light + 0.03).toColor(),
+            HSLColor.fromAHSL(1.0, hue, coverSaturation * 0.6, light).toColor(),
+            HSLColor.fromAHSL(1.0, (hue - 0.03 + 1) % 1.0, coverSaturation * 0.7, light * 0.8).toColor(),
+          ],
+          const [0.0, 0.45, 1.0],
+        ),
     );
-    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), glowPaint);
+
+    // 2) 封面色的柔光晕（居中偏上），营造氛围但不抢文字
+    _drawCoverGlow(canvas, w, h, hue, energy);
+
+    // 3) 音乐驱动的极光带（用真实频谱数据形状，不是纯装饰正弦）
+    if (isPlaying) {
+      _drawSpectrumAurora(canvas, w, h, hue, energy);
+    }
+
+    // 4) 节拍时的柔和脉冲光环
+    if (beat > 0.01) {
+      _drawBeatPulse(canvas, w, h, hue, beat);
+    }
+
+    // 5) 底部压暗，保证播放控件区域与歌词底部可读
+    canvas.drawRect(
+      Rect.fromLTWH(0, h * 0.72, w, h * 0.28),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          Offset(0, h * 0.72),
+          Offset(0, h),
+          [
+            Colors.transparent,
+            HSLColor.fromAHSL(1.0, hue, coverSaturation * 0.5, 0.02).toColor(),
+          ],
+        ),
+    );
+  }
+
+  /// 封面主色柔光：两团大范围高斯光，颜色取自封面
+  void _drawCoverGlow(Canvas canvas, double w, double h, double hue, double energy) {
+    final glow = Paint()
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 60)
+      ..shader = ui.Gradient.radial(
+        Offset(w * 0.5, h * 0.42),
+        w * 0.75,
+        [
+          HSLColor.fromAHSL(1.0, hue, 0.65, 0.5)
+              .toColor()
+              .withValues(alpha: 0.10 + energy * 0.06),
+          Colors.transparent,
+        ],
+        const [0.0, 1.0],
+      );
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), glow);
+
+    // 侧向副色光斑，增加层次
+    final side = Paint()
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 70)
+      ..shader = ui.Gradient.radial(
+        Offset(w * 0.15, h * 0.68),
+        w * 0.6,
+        [
+          HSLColor.fromAHSL(1.0, (hue + 0.12) % 1.0, 0.6, 0.45)
+              .toColor()
+              .withValues(alpha: 0.07),
+          Colors.transparent,
+        ],
+        const [0.0, 1.0],
+      );
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), side);
+  }
+
+  /// 频谱极光：用真实 frequencies 数据的包络画柔和光带。
+  void _drawSpectrumAurora(Canvas canvas, double w, double h, double hue, double energy) {
+    if (frequencies.length < 8) return;
+    final bands = 28;
+    final path = Path();
+    final baseY = h * 0.80;
+
+    // 低频决定高度，高频叠加细碎起伏
+    double yAt(double x) {
+      final t = (x / w).clamp(0.0, 1.0);
+      final idx = (t * (bands - 1)).round();
+      final amp = frequencies.length > idx ? frequencies[idx] : 0.0;
+      return baseY - (amp.clamp(0.0, 1.0) * h * 0.22) - bass * h * 0.05;
+    }
+
+    path.moveTo(0, yAt(0));
+    for (double x = 0; x <= w; x += 4) {
+      path.lineTo(x, yAt(x) + sin(x * 0.01 + time * 0.6) * 2.5);
+    }
+    path.lineTo(w, h);
+    path.lineTo(0, h);
+    path.close();
+
+    final paint = Paint()
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 18 + energy * 22)
+      ..shader = ui.Gradient.linear(
+        Offset(0, baseY - h * 0.2),
+        Offset(0, h),
+        [
+          HSLColor.fromAHSL(1.0, hue, 0.7, 0.5)
+              .toColor()
+              .withValues(alpha: 0.10 + energy * 0.10),
+          Colors.transparent,
+        ],
+        const [0.0, 1.0],
+      );
+    canvas.drawPath(path, paint);
+  }
+
+  /// 节拍脉冲：中心一圈扩散光环
+  void _drawBeatPulse(Canvas canvas, double w, double h, double hue, double beat) {
+    final t = 1.0 - beat.clamp(0.0, 1.0); // beat 刚触发时为 0 → 扩散最大
+    final radius = w * (0.18 + t * 0.35);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..color = HSLColor.fromAHSL(1.0, hue, 0.6, 0.6)
+          .toColor()
+          .withValues(alpha: beat * 0.12 * (1 - t));
+    canvas.drawCircle(Offset(w * 0.5, h * 0.5), radius, paint);
   }
 
   @override
   bool shouldRepaint(covariant _BgPainter old) =>
-      old.time != time || old.isPlaying != isPlaying || old.frequencies != frequencies;
-}
-
-class _Meteor {
-  final double startX, startY, dx, dy, speed, delay, size, brightness;
-  _Meteor(this.startX, this.startY, this.dx, this.dy, this.speed, this.delay, this.size, this.brightness);
-  factory _Meteor.random(Random r) => _Meteor(
-    r.nextDouble() * 0.6,
-    r.nextDouble() * 0.3,
-    0.3 + r.nextDouble() * 0.5,
-    0.6 + r.nextDouble() * 0.3,
-    0.15 + r.nextDouble() * 0.25,
-    r.nextDouble(),
-    1.0 + r.nextDouble() * 2.0,
-    0.4 + r.nextDouble() * 0.4,
-  );
+      old.time != time ||
+      old.isPlaying != isPlaying ||
+      old.coverHue != coverHue ||
+      old.bass != bass ||
+      old.mid != mid ||
+      old.beat != beat ||
+      old.frequencies != frequencies;
 }
 
 /// 歌词换行时的轻微上下位移过渡。
