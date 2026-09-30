@@ -23,7 +23,10 @@ object CarModeDetector {
     /** 车机端 App 包名特征 */
     private val CAR_APP_TOKENS = listOf(
         "incar", "jovi", "hicar", "carplay", "carlauncher",
-        "com.android.car", "android.auto", "banco", "apollo"
+        "com.android.car", "android.auto", "banco", "apollo",
+        // vivo 车联（Jovi InCar 走这套，实测本机存在）
+        "vivo.car", "carlauncher", "musicmixcard", "car.networking",
+        "baidu.carlife", "carlife"
     )
 
     @Volatile

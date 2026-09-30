@@ -48,7 +48,25 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
   /// 重新检测车机接入状态。状态翻转时立即重推当前歌词，切换显示策略。
   Future<void> refreshCarMode() async {
-    final v = await MediaSessionService().isCarMode();
+    // 用户可在设置里强制指定车机模式（Jovi 走通知、AVRCP 走 title，
+    // 自动检测对读通知的投屏车机不可靠，所以保留手动开关）
+    var mode = 'auto';
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final json = prefs.getString('app_settings');
+      if (json != null) {
+        mode = (jsonDecode(json) as Map)['carMode'] as String? ?? 'auto';
+      }
+    } catch (_) {}
+
+    final bool v;
+    if (mode == 'force') {
+      v = true;
+    } else if (mode == 'off') {
+      v = false;
+    } else {
+      v = await MediaSessionService().isCarMode();
+    }
     if (v == _carMode) return;
     _carMode = v;
     final line = _lastKnownLine;
@@ -176,7 +194,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       final cur = _currentItem!;
       final dur = _player.duration;
 
-      // 车机模式：title 保持歌名，歌词放 displaySubtitle/displayDescription/extras
+      // 车机模式：title 保持歌名，歌词写进 artist（→ 通知 android.text）
       // 蓝牙模式：title 写歌词行（AVRCP 车机只认 title）
       final songTitle = _baseSongTitle.isEmpty ? cur.title : _baseSongTitle;
       final singer = cur.artist ?? '';
@@ -184,9 +202,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
           ? singer
           : '$_baseSongTitle${singer.isEmpty ? '' : ' - $singer'}';
       final metaTitle = _carMode ? songTitle : (hasLine ? line : songTitle);
-      final metaSubtitle = _carMode
-          ? (hasLine ? line : '')
-          : (cur.artist ?? '');
 
       // 灵动岛/通知栏/Jovi InCar 卡片读 audio_service 的 this.mediaMetadata（由 mediaItem.add 驱动）
       // 蓝牙车机读 session.controller.metadata（由 MethodChannel 驱动）
@@ -196,15 +211,23 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       // 两个写入方交替覆盖，车机收到过密/矛盾的元数据后拒收后续更新。
       // 车机模式：仍需 audio_service 写（title 保持歌名，歌词进 extras）。
       if (_carMode) {
+        // 车机/投屏模式（Jovi InCar / HiCar）
+        //
+        // dumpsys notification 实测 QQ 音乐的字段分配：
+        //   android.title = 歌名
+        //   android.text  = 歌手 - 歌名
+        // Jovi 首页卡片读的是**通知**而不是 session metadata，
+        // 所以歌词必须写进 artist（audio_service 用它填 android.text），
+        // title 保持歌名，否则卡片标题会一直跳歌词。
         _currentItem = MediaItem(
           id: _baseMediaId,
-          title: metaTitle,
-          artist: cur.artist,
+          title: songTitle,
+          artist: hasLine ? line : (cur.artist ?? ''),
           album: cur.album ?? '',
           artUri: cur.artUri,
           duration: dur ?? cur.duration,
-          displayTitle: metaTitle,
-          displaySubtitle: metaSubtitle,
+          displayTitle: songTitle,
+          displaySubtitle: cur.artist ?? '',
           displayDescription: hasLine ? line : (cur.album ?? ''),
           extras: {
             'lyric': line ?? '',

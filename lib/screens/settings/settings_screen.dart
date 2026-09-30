@@ -24,6 +24,47 @@ String _qualityLabel(String quality) => switch (quality) {
   _ => quality,
 };
 
+String _carModeLabel(String mode) => switch (mode) {
+  'force' => '强制车机模式（歌名+歌词，适配 Jovi InCar）',
+  'off' => '强制蓝牙模式（标题显示歌词，适配 AVRCP 车机）',
+  _ => '自动检测',
+};
+
+void _showCarModeSheet(BuildContext context, WidgetRef ref, String current) {
+  const options = <(String, String, String)>[
+    ('auto', '自动检测', '按已连接的车机类型自动选择'),
+    ('force', '强制车机模式', '标题保持歌名，歌词显示在副标题（Jovi InCar / HiCar）'),
+    ('off', '强制蓝牙模式', '标题显示歌词行（传统 AVRCP 车机）'),
+  ];
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: AppColors.card,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final (value, title, desc) in options)
+            ListTile(
+              leading: Icon(
+                current == value ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                color: current == value ? AppColors.primary : AppColors.textHint,
+              ),
+              title: Text(title, style: TextStyle(color: AppColors.textPrimary)),
+              subtitle: Text(desc, style: TextStyle(color: AppColors.textHint, fontSize: 11)),
+              onTap: () {
+                ref.read(settingsProvider.notifier).setCarMode(value);
+                Navigator.pop(ctx);
+              },
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -93,6 +134,13 @@ class SettingsScreen extends ConsumerWidget {
                 subtitle: '向车机/蓝牙耳机推送当前歌词',
                 value: settings.enableBluetoothLyric,
                 onChanged: (value) => settingsNotifier.setBluetoothLyric(value),
+              ),
+              const _Divider(),
+              _buildTapTile(
+                icon: Icons.directions_car_filled_rounded,
+                title: '车机模式',
+                subtitle: _carModeLabel(settings.carMode),
+                onTap: () => _showCarModeSheet(context, ref, settings.carMode),
               ),
             ],
           ),

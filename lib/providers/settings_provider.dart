@@ -12,6 +12,11 @@ class AppSettings {
   final bool gaplessPlayback;
   final bool enableBluetoothLyric;
 
+  /// 车机模式：auto=自动检测 / force=强制车机模式 / off=强制蓝牙模式
+  /// 车机模式 title 保持歌名、歌词写通知副标题（Jovi InCar 等读通知的投屏车机）；
+  /// 蓝牙模式 title 写歌词行（AVRCP 车机只认 title）。
+  final String carMode;
+
   AppSettings({
     this.isDarkMode = false,
     this.fontSize = 14.0,
@@ -21,6 +26,7 @@ class AppSettings {
     this.syncHost = '',
     this.syncCode = '',
     this.enableBluetoothLyric = true,
+    this.carMode = 'auto',
   });
 
   AppSettings copyWith({
@@ -32,6 +38,7 @@ class AppSettings {
     String? syncHost,
     String? syncCode,
     bool? enableBluetoothLyric,
+    String? carMode,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -42,6 +49,7 @@ class AppSettings {
       syncHost: syncHost ?? this.syncHost,
       syncCode: syncCode ?? this.syncCode,
       enableBluetoothLyric: enableBluetoothLyric ?? this.enableBluetoothLyric,
+      carMode: carMode ?? this.carMode,
     );
   }
 
@@ -55,6 +63,7 @@ class AppSettings {
       'syncHost': syncHost,
       'syncCode': syncCode,
       'enableBluetoothLyric': enableBluetoothLyric,
+      'carMode': carMode,
     };
   }
 
@@ -68,6 +77,7 @@ class AppSettings {
       syncHost: json['syncHost'] ?? '',
       syncCode: json['syncCode'] ?? '',
       enableBluetoothLyric: json['enableBluetoothLyric'] ?? true,
+      carMode: json['carMode'] ?? 'auto',
     );
   }
 }
@@ -129,6 +139,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
 
   void setBluetoothLyric(bool enabled) {
     state = state.copyWith(enableBluetoothLyric: enabled);
+    _saveSettings();
+  }
+
+  void setCarMode(String mode) {
+    state = state.copyWith(carMode: mode);
     _saveSettings();
   }
 }
