@@ -132,6 +132,12 @@ _JizuraPainter({
   /// 当前正在绘制的那一句的虚拟播放位置。
   Duration _curAt = Duration.zero;
 
+  /// 复用的 TextPainter。
+  ///
+  /// 每帧要跑 4~6 次 _pass，每次都 new 一个 TextPainter 只是为了逐字
+  /// layout+paint；提到字段上省掉这些分配。
+  final TextPainter _tp = TextPainter(textDirection: TextDirection.ltr);
+
   // ---------------- JIZURA 缓动 ----------------
   static double _cl(double x) => x.clamp(0.0, 1.0);
   static double _oc(double x) => 1 - math.pow(1 - _cl(x), 3).toDouble();
@@ -193,26 +199,31 @@ void paint(Canvas canvas, Size size) {
     // 中间由当前句的进度把它们接起来。
     if (enter < 1 && index - 1 >= 0) {
       _paintLine(canvas, size, index - 1,
-          enter: 1, exitIn: 1, at: position);
+          enter: 1, exitIn: 1, at: position, detailed: false);
     }
     if (exit > 0 && index + 1 < lines.length) {
       _paintLine(canvas, size, index + 1,
-          enter: 0, exitIn: 0, at: lines[index + 1].time);
+          enter: 0, exitIn: 0, at: lines[index + 1].time, detailed: false);
     }
 
     _paintLine(canvas, size, index,
-        enter: enter, exitIn: exit, at: position);
+        enter: enter, exitIn: exit, at: position, detailed: true);
   }
 
-  /// 画一句歌词。[enter]/[exit] 由调用方给��（冻结在 0 或 1 即为邻句定格），
+  /// 画一句歌词。[enter]/[exitIn] 由调用方给定（冻结在 0 或 1 即为邻句定格），
   /// [at] 是这句的「虚拟播放位置」，用来解算扫字播放头。
+  ///
+  /// [detailed] 为 false 表示这是交接窗口里的邻句：只画一层，
+  /// 跳过扫字亮层与色差错位。邻句此时基本处于 alpha 地板附近，
+  /// 那些细节看不清，却是交接瞬间最贵的开销。
   ///
   /// 原先这些都直接读 `index` / `position`，只能画当前句；
   /// 拆出来后交接时才能两句同场。
   void _paintLine(Canvas canvas, Size size, int i,
       {required double enter,
       required double exitIn,
-      required Duration at}) {
+      required Duration at,
+      required bool detailed}) {
     if (i < 0 || i >= lines.length) return;
     final line = lines[i];
     if (line.text.trim().isEmpty || line.text == '\u00A0') return;
@@ -346,23 +357,29 @@ void paint(Canvas canvas, Size size) {
     }
 
 // ---- 满屏铺贴：整句缩小后平铺成背景墙（画在主句之下）----
-    if (config.layout == LyricLayout.tile) {
+    if (detailed && config.layout == LyricLayout.tile) {
       _drawTiledWall(canvas, size, layout);
     }
 
     // ---- 残像堆叠：主句下方的递减残影（画在主句之下）----
-    if (config.layout == LyricLayout.stack) {
+    if (detailed && config.layout == LyricLayout.stack) {
       _drawStackGhosts(canvas, layout, pal, globalAlpha, weightK, amt, t);
     }
 
 // ---- 色差错位（ghost）----
-    final chromaBase = config.treat == LyricTreat.chroma ? 1.5 : 0.7;
-    final chroma = chromaBase * (1.0 + amt * 0.25);
-    if (config.treat != LyricTreat.outline) {
-      _pass(canvas, layout, pal.accent.withValues(alpha: globalAlpha * 0.85),
-          Offset(3.2 * chroma * u, 1.9 * chroma * u), weightK, amt, t, false);
-      _pass(canvas, layout, pal.accent2.withValues(alpha: globalAlpha * 0.85),
-          Offset(-3.4 * chroma * u, -1.3 * chroma * u), weightK, amt, t, false);
+    // 两次完整逐字绘制，是单句最贵的固定开销之一。
+    // 邻句、以及已经淡到看不清时直接跳过。
+    if (detailed &&
+        config.treat != LyricTreat.outline &&
+        globalAlpha > 0.45) {
+      final chromaBase = config.treat == LyricTreat.chroma ? 1.5 : 0.7;
+      final chroma = chromaBase * (1.0 + amt * 0.25);
+      _passFlat(canvas, layout,
+          pal.accent.withValues(alpha: globalAlpha * 0.85),
+          Offset(3.2 * chroma * u, 1.9 * chroma * u));
+      _passFlat(canvas, layout,
+          pal.accent2.withValues(alpha: globalAlpha * 0.85),
+          Offset(-3.4 * chroma * u, -1.3 * chroma * u));
     }
 
     // ---- 扫字：两层结构（暗底 + 亮层遮罩）----
@@ -372,7 +389,7 @@ void paint(Canvas canvas, Size size) {
     // 视觉上像色块跳变而非扫过。
     // 正确做法是整句画两遍——底层压暗，上层用横向渐变遮罩
     // 只露出播放头左侧，这样软边可以横跨整行、跨过字的接缝。
-    final sweep = _computeSweep(line, layout, t, dur);
+    final sweep = detailed ? _computeSweep(line, layout, t, dur) : null;
     final baseInk = pal.fg.withValues(alpha: globalAlpha);
 
     if (sweep != null) {
@@ -392,12 +409,14 @@ void paint(Canvas canvas, Size size) {
       _pass(canvas, layout, baseInk, Offset.zero, weightK, amt, t, true);
     }
 
-// 先关闭转场模糊层（若开启），再关闭主 save
+    // 关闭转场模糊层（若开启），再关闭主 save
     if (blurLayer) canvas.restore();
     canvas.restore();
 
     // ---- 翻译行 ----
-    final trans2 = line.translation;
+    // 邻句不画翻译：交接瞬间它处于 alpha 地板附近，看不清，
+    // 但每次 layout+paint 都是实打实的开销。
+    final trans2 = detailed ? line.translation : null;
     if (trans2 != null && trans2.isNotEmpty && exit < 0.4) {
       final trAlpha = (1 - exit) * (0.4 + amt * 0.3);
       final tp = TextPainter(textDirection: TextDirection.ltr);
@@ -426,7 +445,14 @@ void paint(Canvas canvas, Size size) {
   ///
   /// 绘制量有硬上限（[_tileMaxGlyphs]）：这是车机/低端机场景，
   /// CustomPaint 每帧重绘，逐字 TextPainter.layout 开销必须封顶。
-  static const int _tileMaxGlyphs = 48;
+  static const int _tileMaxGlyphs = 32;
+
+  /// 平铺背景墙的缓存。
+  ///
+  /// 墙是静态的（只依赖版式、尺寸、配色），但原来每帧都要重画最多
+  /// 48 个字 —— 单这一项就是全场最贵的一次性开销。
+  /// 录成 ui.Picture 后每帧一次 drawPicture 即可。
+  static final Map<String, ui.Picture> _tileCache = {};
 
   void _drawTiledWall(Canvas canvas, Size size, _Layout layout) {
     if (layout.glyphs.isEmpty) return;
@@ -436,13 +462,36 @@ void paint(Canvas canvas, Size size) {
     if (totalW <= 1 || rowH <= 1) return;
 
     const k = 0.24;
+    // 墙在中心坐标系里绘制，缓存的是缩放后的内容
+    final key = '${layout.size.toStringAsFixed(1)}|$totalW.toStringAsFixed(1)}|'
+        '${size.width.toStringAsFixed(1)}|${size.height.toStringAsFixed(1)}|'
+        '${pal.fg.toARGB32()}';
+
+    var pic = _tileCache[key];
+    if (pic == null) {
+      final recorder = ui.PictureRecorder();
+      _recordTiledWall(Canvas(recorder), layout, pal, totalW, rowH, k, size);
+      pic = recorder.endRecording();
+      if (_tileCache.length >= 6) _tileCache.clear();
+      _tileCache[key] = pic;
+    }
+
+    canvas.save();
+    canvas.scale(k, k);
+    // picture 的内容以自身原点为中心（glyph 坐标本就是中心相对），
+    // 调用处已把画布平移到屏幕中心，所以直接画即可，不需要额外偏移。
+    canvas.drawPicture(pic);
+    canvas.restore();
+  }
+
+  void _recordTiledWall(Canvas c, _Layout layout, LyricPalette pal,
+      double totalW, double rowH, double k, Size size) {
     final visW = size.width / k;
     final visH = size.height / k;
     final cols = (visW / totalW).ceil() + 1;
     final rowCount = (visH / rowH).ceil() + 1;
-    if (cols <= 0 || rowCount <= 0) return;
 
-    final tp = TextPainter(textDirection: TextDirection.ltr);
+    final tp = _tp;
     final st = TextStyle(
       fontSize: layout.size,
       fontWeight: FontWeight.w900,
@@ -452,31 +501,26 @@ void paint(Canvas canvas, Size size) {
     );
 
     var drawn = 0;
-    canvas.save();
-    // 注意：调用处已把画布平移到屏幕中心，这里不能再平移一次，
-    // 否则整面墙会偏移 (W/2, H/2)。
-    canvas.scale(k, k);
     for (int r = -rowCount; r <= rowCount; r++) {
       // 奇数行错开半格，避免出现明显的竖向对齐纹
       final rowShift = r.isOdd ? totalW * 0.5 : 0.0;
-      for (int c = -cols; c <= cols; c++) {
-        canvas.save();
-        canvas.translate(c * totalW + rowShift, r * rowH);
+      for (int col = -cols; col <= cols; col++) {
+        if (drawn >= _tileMaxGlyphs) return;
+        c.save();
+        c.translate(col * totalW + rowShift, r * rowH);
         for (final g in layout.glyphs) {
           if (drawn >= _tileMaxGlyphs) {
-            canvas.restore();
-            canvas.restore();
+            c.restore();
             return;
           }
           drawn++;
           tp.text = TextSpan(text: g.ch, style: st);
           tp.layout();
-          tp.paint(canvas, Offset(g.x, g.y));
+          tp.paint(c, Offset(g.x, g.y));
         }
-        canvas.restore();
+        c.restore();
       }
     }
-    canvas.restore();
   }
 
   // ---------------- 残像堆叠 ----------------
@@ -896,15 +940,34 @@ void paint(Canvas canvas, Size size) {
   }
 
   // ---------------- 版式 ----------------
+/// 版式排版结果的跨帧缓存。
+  ///
+  /// _layout 是纯函数（只依赖 文本 / config.layout / size），但它内部要对
+  /// 每个字跑一次 TextPainter.layout()，一句 20 字就是 22 次。
+  /// painter 每帧都是新实例，所以缓存必须是 static 的。
+  /// 歌词页只有当前句 + 邻句在用，命中率接近 100%。
+  static final Map<String, _Layout> _layoutCache = {};
+  static const int _layoutCacheCap = 48;
+
   _Layout _layout(String text, Size size) {
     final clean = text.replaceAll('\u00A0', '').trim();
     if (clean.isEmpty) return _Layout(const [], 48, const []);
+    final key = '${config.layout.name}|${size.width.toStringAsFixed(1)}|'
+        '${size.height.toStringAsFixed(1)}|$clean';
+    final hit = _layoutCache[key];
+    if (hit != null) return hit;
+    final built = _layoutUncached(clean, size);
+    if (_layoutCache.length >= _layoutCacheCap) _layoutCache.clear();
+    _layoutCache[key] = built;
+    return built;
+  }
 
+  _Layout _layoutUncached(String clean, Size size) {
     if (config.layout == LyricLayout.vertical) {
       return _layoutVertical(clean, size);
     }
 
-final W = size.width;
+    final W = size.width;
     final H = size.height;
     final n = clean.characters.length;
     final isMarquee = config.layout == LyricLayout.marquee;
@@ -1014,6 +1077,36 @@ final W = size.width;
   bool _isStrokeTreat(LyricTreat t) =>
       t == LyricTreat.outline || t == LyricTreat.neon;
 
+  /// 整行一次性绘制的简化版本：**按行**而不是按字跑 TextPainter。
+  ///
+  /// 用于色差错位这类纯装饰性重影：它们不需要逐字抖动，
+  /// 而 _pass 每字一次 layout，一句 20 字就是 20 次。
+  /// 按行绘制后通常只需 1~2 次，N 字降到 2 次。
+  ///
+  /// 代价是重影没有逐字抖动，且字距为整行排版结果（逐字求和会略差）。
+  /// 两者在 85% 透明度的重影上肉眼不可辨。
+  void _passFlat(Canvas canvas, _Layout layout, Color color, Offset offset) {
+    if (layout.rows.isEmpty) return;
+    final tp = _tp;
+    final st = TextStyle(
+      fontSize: layout.size,
+      fontWeight: FontWeight.w900,
+      height: 1.0,
+      letterSpacing: -0.02 * layout.size,
+      color: color,
+    );
+    for (final row in layout.rows) {
+      if (row.isEmpty) continue;
+      final buf = StringBuffer();
+      for (final g in row) {
+        buf.write(g.ch);
+      }
+      tp.text = TextSpan(text: buf.toString(), style: st);
+      tp.layout();
+      tp.paint(canvas, offset + Offset(row.first.x, row.first.y));
+    }
+  }
+
   void _pass(
     Canvas canvas,
     _Layout layout,
@@ -1026,9 +1119,10 @@ final W = size.width;
     ui.Gradient? shader,
   }) {
     if (layout.glyphs.isEmpty) return;
-    final pal = config.palette;
+final pal = config.palette;
     final treat = config.treat;
-    final tp = TextPainter(textDirection: TextDirection.ltr);
+    // 复用字段上的实例，省掉每帧多次 TextPainter 分配
+    final tp = _tp;
     final motion = config.motion;
 
     canvas.save();
