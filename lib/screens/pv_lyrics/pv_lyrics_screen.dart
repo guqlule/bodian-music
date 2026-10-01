@@ -6,12 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/app_providers.dart';
 import '../../services/lyric/lyric_parser.dart';
-import 'apple_lyrics_view.dart';
+import 'jizura_lyrics_view.dart';
 
-/// Apple Music 风格全屏歌词页
+/// 全屏特效歌词页（JIZURA 风格）
 ///
-/// 背景 = 封面大图重度模糊（带兜底渐变，绝不纯黑）
-/// 歌词 = [AppleLyricsView]
+/// 参考 852wa/JIZURA 的视觉语言：
+/// 屏幕上只有当前一句，巨号铺满，色差错位 + 逐字波浪 + 弹跳入场。
+/// 没有上下句滚动列表。
 class PvLyricsScreen extends ConsumerStatefulWidget {
   const PvLyricsScreen({super.key});
 
@@ -49,19 +50,20 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-        backgroundColor: const Color(0xFF12121A),
+        backgroundColor: const Color(0xFF060607),
         body: Stack(
           fit: StackFit.expand,
           children: [
-            const _CoverBackdrop(),
+            // 封面底纹：重度模糊 + 极低透明度，只做氛围不抢歌词
+            const _CoverTexture(),
             SafeArea(
               child: Column(
                 children: [
                   const _TopBar(),
                   Expanded(
                     child: _lyrics.isEmpty
-                        ? const _EmptyState()
-                        : AppleLyricsView(
+                        ? const SizedBox.shrink()
+                        : JizuraLyricsView(
                             lines: _lyrics,
                             position: position,
                             onSeek: (t) =>
@@ -87,15 +89,15 @@ class _TopBar extends ConsumerWidget {
     final music = ref.watch(currentMusicProvider).valueOrNull;
     final singer = music?.singer ?? '';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 4, 20, 10),
+      padding: const EdgeInsets.fromLTRB(4, 4, 20, 0),
       child: Row(
         children: [
           IconButton(
             icon: const Icon(Icons.keyboard_arrow_down_rounded,
-                size: 30, color: Colors.white70),
+                size: 28, color: Colors.white54),
             onPressed: () => Navigator.pop(context),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -106,12 +108,10 @@ class _TopBar extends ConsumerWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
+                    color: Color(0xFFF5EEEA),
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    shadows: [
-                      Shadow(color: Colors.black54, blurRadius: 6),
-                    ],
+                    letterSpacing: 0.3,
                   ),
                 ),
                 if (singer.isNotEmpty)
@@ -120,9 +120,9 @@ class _TopBar extends ConsumerWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                      shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
+                      color: Color(0xFFBDB6B2),
+                      fontSize: 11,
+                      letterSpacing: 0.3,
                     ),
                   ),
               ],
@@ -134,70 +134,38 @@ class _TopBar extends ConsumerWidget {
   }
 }
 
-/// 空状态
-class _EmptyState extends ConsumerWidget {
-  const _EmptyState();
+/// 封面底纹：模糊封面 + 极低透明度
+class _CoverTexture extends ConsumerWidget {
+  const _CoverTexture();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final music = ref.watch(currentMusicProvider).valueOrNull;
     final url = _coverUrl(music);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (url != null)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: Image.network(
-                url,
-                width: 170,
-                height: 170,
-                fit: BoxFit.cover,
-                cacheWidth: 340,
-                errorBuilder: (_, __, ___) => const _CoverPlaceholder(),
-              ),
-            )
-          else
-            const _CoverPlaceholder(),
-          const SizedBox(height: 24),
-          const Text(
-            '暂无歌词',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
+    if (url == null) return const SizedBox.shrink();
+
+    return Opacity(
+      opacity: 0.16,
+      child: ImageFiltered(
+        imageFilter: ui.ImageFilter.blur(sigmaX: 60, sigmaY: 60),
+        child: Transform.scale(
+          scale: 1.3,
+          child: Image.network(
+            url,
+            fit: BoxFit.cover,
+            cacheWidth: 180,
+            frameBuilder: (context, child, frame, wasSync) {
+              if (wasSync || frame != null) return child;
+              return const SizedBox.shrink();
+            },
+            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class _CoverPlaceholder extends StatelessWidget {
-  const _CoverPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 170,
-      height: 170,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      alignment: Alignment.center,
-      child: const Icon(
-        Icons.music_note_rounded,
-        color: Colors.white24,
-        size: 60,
-      ),
-    );
-  }
-}
-
-/// 封面 URL（本地歌曲转 file://）
 String? _coverUrl(dynamic music) {
   if (music == null) return null;
   final artUrl = music.imgUrl as String?;
@@ -210,105 +178,4 @@ String? _coverUrl(dynamic music) {
     }
   }
   return artUrl;
-}
-
-/// 封面背景层
-///
-/// 三层结构保证「绝不纯黑」：
-///   1. 底层：深色渐变（无封面时也好看）
-///   2. 中层：封面重度模糊图（加载失败自动跳过）
-///   3. 上层：顶部/底部压暗，保证文字对比度
-class _CoverBackdrop extends ConsumerStatefulWidget {
-  const _CoverBackdrop();
-
-  @override
-  ConsumerState<_CoverBackdrop> createState() => _CoverBackdropState();
-}
-
-class _CoverBackdropState extends ConsumerState<_CoverBackdrop>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _drift = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 26),
-  )..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _drift.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final music = ref.watch(currentMusicProvider).valueOrNull;
-    final url = _coverUrl(music);
-    final isPlaying = ref.watch(isPlayingProvider).valueOrNull ?? false;
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // 1) 底层渐变（永远存在）
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color(0xFF1E2233),
-                Color(0xFF14161F),
-                Color(0xFF1A1526),
-              ],
-            ),
-          ),
-        ),
-        // 2) 封面模糊图
-        if (url != null)
-          Positioned.fill(
-            child: AnimatedBuilder(
-              animation: _drift,
-              builder: (context, _) {
-                // 暂停时冻结在中间位置
-                final k = isPlaying ? _drift.value : 0.5;
-                return ImageFiltered(
-                  imageFilter: ui.ImageFilter.blur(sigmaX: 46, sigmaY: 46),
-                  child: Transform.scale(
-                    // 放大 + 位移，避免模糊后边缘露白、且有缓慢漂移感
-                    scale: 1.30 + k * 0.06,
-                    child: Transform.translate(
-                      offset: Offset((k - 0.5) * 20, (k - 0.5) * -14),
-                      child: Image.network(
-                        url,
-                        fit: BoxFit.cover,
-                        cacheWidth: 200,
-                        // 加载失败/无图时透明，露出底层渐变
-                        frameBuilder: (context, child, frame, wasSync) {
-                          if (wasSync || frame != null) return child;
-                          return const SizedBox.shrink();
-                        },
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        // 3) 对比度压暗（只压上下，中间留亮）
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0x66000000),
-                Color(0x1A000000),
-                Color(0x59000000),
-              ],
-              stops: [0.0, 0.42, 1.0],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }
