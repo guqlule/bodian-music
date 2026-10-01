@@ -164,23 +164,34 @@ class _JizuraPainter extends CustomPainter {
       return;
     }
 
-    // 时间轴
+// 时间轴
     final dur = _lineDuration(index);
     final lineStart = line.time;
     final t = ((position - lineStart).inMilliseconds / 1000.0).clamp(0.0, dur);
-    final inDur = (dur * 0.36).clamp(0.12, 0.6);
-    final outDur = config.exit == LyricExit.none
-        ? 0.0
-        : (dur * 0.3).clamp(0.14, 0.55);
+
+    // 转场是否启用要先于时长计算——它决定用哪套时长（规矩 5）
+    final trans = config.transition;
+    final fly = config.fly;
+    final useTransition = trans != LyricTransition.none && !fly;
+
+    // 规矩 5：转场时长由行时长决定，并带下限。
+    // 上限压得比原来低（0.45/0.40），否则短句会被转场整个吃掉。
+    final inDur = useTransition
+        ? (dur * 0.30).clamp(0.15, 0.45)
+        : (dur * 0.36).clamp(0.12, 0.6);
+    final outDur = useTransition
+        ? (dur * 0.26).clamp(0.12, 0.40)
+        : (config.exit == LyricExit.none
+            ? 0.0
+            : (dur * 0.3).clamp(0.14, 0.55));
     final outStart = dur - outDur;
 
-final enter = _cl(t / inDur);
+    final enter = _cl(t / inDur);
     final exitRaw = outDur > 0.002 ? _cl((t - outStart) / outDur) : 0.0;
 
     // ---- 镜头追踪参数 ----
     // 打开时由纵深运动接管入场/出场（两者叠加会互相打架），
     // 但文本特效 / 扫字 / 抖动照常生效。
-    final fly = config.fly;
     final rel = dur > 0 ? _cl(t / dur) : 0.0;
     final flyZ = _currentDepth(rel);
     final flyW = _depthW(flyZ);
@@ -240,23 +251,21 @@ final enter = _cl(t / inDur);
     final xo = _exitTransform(config.exit, exit, seed);
 
     // ---- 转场：接管入场/出场的位移与淡出 ----
-    // exit 与 enter 解算的是**同一条 flowAngle 向量**，
-    // 所以交接前后屏幕上的运动方向不变（见 _transitionFrame 注释）。
-    final trans = config.transition;
-    final useTransition = trans != LyricTransition.none && !fly;
+    // 方向全曲统一（见 _flowAngle），所以交接前后运动方向不变。
     var trBlur = 0.0;
     var trAlpha = 1.0;
 
     if (useTransition) {
-      // 关键：进场属于「line[index-1] → line[index]」这条边界，
-      // 出场属于「line[index] → line[index+1]」那条边界。
-      // 向量必须按**边界**取，两侧才接得上；
-      // 若两边都取 _flowAngle(index)，出场会和下一句的进场
-      // 指向不同方向，恰好破坏「运动方向始终不变」这个前提。
-      final fEnter =
-          _transitionFrame(trans, 'enter', enter, _flowAngle(index), size);
-      final fExit =
-          _transitionFrame(trans, 'exit', exit, _flowAngle(index + 1), size);
+      // 规矩 3：位移单位取本行自己的尺度（不小于字号的行宽），
+      // 「刚好移出画面」即可，与屏幕大小无关。
+      final lineW = layout.glyphs.isEmpty
+          ? layout.size
+          : math.max(layout.glyphs.last.x + layout.glyphs.last.w
+              - layout.glyphs.first.x, layout.size);
+      final unit = lineW * 0.5 + size.width * 0.5;
+
+      final fEnter = _transitionFrame(trans, 'enter', enter, unit);
+      final fExit = _transitionFrame(trans, 'exit', exit, unit);
 
       // 两段位移相加：出场继续沿向量推进，进场从上游抵达
       final dx = fExit.dx + fEnter.dx;
@@ -530,10 +539,20 @@ final enter = _cl(t / inDur);
     return t * t * (3 - 2 * t);
   }
 
-  /// 每句一个稳定的流向量（由行号散列），保证同一条句子
-  /// 每次播放的转场方向一致，不会随机乱跳。
-  static double _flowAngle(int lineIndex) =>
-      _hash(lineIndex * 57 + 5) * math.pi * 2;
+  /// 全曲统一的流向量。
+  ///
+  /// 规矩 1：方向属于整首歌，不属于单句。
+  /// 早先版本用 `_hash(lineIndex)` 给每句一个随机角度，
+  /// 于是第 3 句往右上退场、第 4 句从左下进场 —— 参考项目要的恰恰相反。
+  /// 相邻边界方向不一致会让人晕车，所以这里固定成一个常量：
+  /// 略微向下的水平流向，读起来像文字在流，而不是在乱窜。
+  static const double _flowAngle = -0.21;
+
+  /// 不许空屏：淡出时的 alpha 下限。
+  ///
+  /// 规矩 2。我们只画一句，旧句淡到 0、新句还没淡进来时屏幕是纯黑的。
+  /// 留一个地板让交接读起来是「快速溶解」而不是「灭屏再点亮」。
+  static const double _alphaFloor = 0.16;
 
   /// 解算转场在某一侧的画面帧。
   ///
@@ -541,67 +560,63 @@ final enter = _cl(t / inDur);
   /// [progress] 为 0→1。返回的 dx/dy 已按画布尺寸归一化。
   static ({double dx, double dy, double scale, double alpha, double blur})
       _transitionFrame(LyricTransition kind, String phase, double progress,
-          double flowAngle, Size size) {
+          double unit) {
     final linear = progress.clamp(0.0, 1.0);
     final eased = _inOutExpo(linear);
     // 越靠近边界 near 越大
     final near = phase == 'exit' ? _smooth01(linear) : 1 - _smooth01(linear);
-    final flowX = math.cos(flowAngle);
-    final flowY = math.sin(flowAngle);
-    // 位移用画布对角线做单位，任意屏幕尺寸下观感一致
-    final unit = math.sqrt(size.width * size.width + size.height * size.height);
+    final flowX = math.cos(_flowAngle);
+    final flowY = math.sin(_flowAngle);
 
-    double travelFactor = 0.0; // 沿向量走了多远（0~1）
+    double travelFactor = 0.0; // 沿向量走了多远（以本行大小为单位）
     var scale = 1.0;
     var alpha = 1.0;
     var blur = 0.0;
 
+    // 规矩 4：一个转场只做一件事。
+    // 早先版本位移+缩放+模糊+透明度一起上，必然显乱。
+    // 现在每种只允许一个主轴：
+    //   熄灯/闪白 -> alpha    拉焦 -> blur
+    //   推移/擦除 -> position  溶入 -> scale
     switch (kind) {
       case LyricTransition.lightsOut:
-        alpha = 1 - near;
+        // 只做透明度，且不低于地板
+        alpha = _alphaFloor + (1 - _alphaFloor) * (1 - near);
         break;
       case LyricTransition.flareCut:
-        // 模糊/放大的峰值落在边界上
-        scale = 1 + 0.03 * near;
-        blur = 7 * near * near;
-        alpha = 1 - 0.35 * near * near;
+        // 只做透明度：边界处快速压暗再回弹，像一次闪光
+        alpha = 1 - 0.85 * (near * near * (3 - 2 * near));
         break;
       case LyricTransition.focusPull:
-        scale = 1 + 0.015 * near;
-        blur = 12 * near;
+        // 只做模糊，峰值落在边界上
+        blur = 11 * near;
         break;
       case LyricTransition.cameraPan:
-        // exit 继续往前推，enter 从上游 arrive 到同一向量上
-        travelFactor = phase == 'exit' ? eased * 0.5 : -(1 - eased) * 0.5;
-        // alpha 一直保持到几乎移出画面，避免中途出现空屏
-        alpha = phase == 'exit'
-            ? 1 - _cl((linear - 0.72) / 0.28)
-            : _cl(linear / 0.3);
-        scale = 1 + (phase == 'exit' ? eased : 1 - eased) * 0.03;
-        break;
-      case LyricTransition.shapeCarry:
-        // 边漂移边放大虚化，像被下一个画面抽出焦点
-        travelFactor = (phase == 'exit' ? eased : eased - 1) * 0.18;
-        final away = phase == 'exit' ? eased : 1 - eased;
-        scale = 1 + away * 0.07;
-        alpha = phase == 'exit'
-            ? 1 - _cl((linear - 0.55) / 0.45)
-            : _cl(linear / 0.45);
-        blur = away * 6;
+        // 只做位移：刚好把这一行推出画面
+        travelFactor = phase == 'exit' ? eased : -(1 - eased);
+        alpha = _alphaFloor + (1 - _alphaFloor) *
+            (phase == 'exit' ? 1 - _cl((linear - 0.78) / 0.22) : _cl(linear / 0.22));
         break;
       case LyricTransition.blockWipe:
-        // 参考用一块全屏色块盖住交接点；这里没有 overlay 色块，
-        // 退化为整句横穿画面（同向量、行程拉满）
-        travelFactor = phase == 'exit' ? eased : -(1 - eased);
-        alpha = phase == 'exit'
-            ? 1 - _cl((linear - 0.80) / 0.20)
-            : _cl(linear / 0.25);
+        // 只做位移，行程更长：整句横穿
+        travelFactor = phase == 'exit' ? eased * 1.35 : -(1 - eased) * 1.35;
+        alpha = _alphaFloor + (1 - _alphaFloor) *
+            (phase == 'exit' ? 1 - _cl((linear - 0.84) / 0.16) : _cl(linear / 0.18));
+        break;
+      case LyricTransition.shapeCarry:
+        // 只做缩放：向镜头推近 / 退远
+        scale = 1 + (phase == 'exit' ? eased : 1 - eased) * 0.12;
+        alpha = _alphaFloor + (1 - _alphaFloor) *
+            (phase == 'exit' ? 1 - _cl((linear - 0.70) / 0.30) : _cl(linear / 0.30));
         break;
       case LyricTransition.none:
         break;
     }
 
     return (
+      // 规矩 3：位移以本行大小为单位，不是屏幕对角线。
+      // 巨字（0.98H）整句横穿对角线时，大部分时间它是半截挂在
+      // 屏幕上被裁切的巨字，观感很差。
       dx: flowX * travelFactor * unit,
       dy: flowY * travelFactor * unit,
       scale: scale,

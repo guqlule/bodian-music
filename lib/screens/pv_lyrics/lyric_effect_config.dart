@@ -122,6 +122,39 @@ enum LyricTransition {
   final String desc;
 }
 
+/// 一套协调的特效组合。
+///
+/// 规矩 6：随机特效不再是各轴独立抽签。
+/// 早先版本独立抽版式/入场/出场/文本/转场，会组合出
+/// 「巨字 + 描边 + 静止 + 推移」这类互相打架的结果 ——
+/// 描边本身没有填充，静止又叠在巨字上，转场推移还在动。
+/// 现在改为从下列成套方案里抽，任意两项搭在一起都成立。
+class LyricPreset {
+  final String name;
+  final LyricLayout layout;
+  final LyricEntrance entrance;
+  final LyricExit exit;
+  final LyricTreat treat;
+  final LyricPalette palette;
+  final double motion;
+  final bool sweep;
+  final bool fly;
+  final LyricTransition transition;
+
+  const LyricPreset(
+    this.name,
+    this.layout,
+    this.entrance,
+    this.exit,
+    this.treat,
+    this.palette,
+    this.motion, {
+    this.sweep = true,
+    this.fly = false,
+    this.transition = LyricTransition.none,
+  });
+}
+
 /// 特效配置
 class LyricEffectConfig {
   final LyricLayout layout;
@@ -226,39 +259,70 @@ class LyricEffectConfig {
     );
   }
 
-  /// 随机模式：按种子生成一套特效组合。
-  /// 同一首歌内稳定（换歌会换一套），避免每帧乱跳。
-  ///
-  /// 注意：**配色不参与随机**（用 [keepPalette]），
-  /// 否则每句都换整屏底色会疯狂闪屏。
-  factory LyricEffectConfig.randomized(int seed, {LyricPalette? keepPalette}) {
-    double h(int salt) {
-      final x = math.sin((seed + salt) * 127.1 + 311.7) * 43758.5453;
-      return x - x.floor();
+  /// 成套方案表。每一行内部都是协调的，可以单独照抄当手动配置用。
+  static const List<LyricPreset> presets = [
+    LyricPreset('夜黑巨号', LyricLayout.huge, LyricEntrance.pop,
+        LyricExit.shrink, LyricTreat.glow, LyricPalette.noir, 1.0,
+        transition: LyricTransition.lightsOut),
+    LyricPreset('素白描边', LyricLayout.huge, LyricEntrance.type,
+        LyricExit.none, LyricTreat.outline, LyricPalette.noir, 0.9,
+        transition: LyricTransition.flareCut),
+    LyricPreset('薄荷霓虹', LyricLayout.center, LyricEntrance.pop,
+        LyricExit.shrink, LyricTreat.neon, LyricPalette.mint, 1.1,
+        fly: true, transition: LyricTransition.focusPull),
+    LyricPreset('HUD推移', LyricLayout.center, LyricEntrance.zoom,
+        LyricExit.none, LyricTreat.glow, LyricPalette.hud, 0.8,
+        transition: LyricTransition.cameraPan),
+    LyricPreset('绯红色差', LyricLayout.huge, LyricEntrance.drop,
+        LyricExit.explode, LyricTreat.chroma, LyricPalette.crimson, 1.25,
+        fly: true),
+    LyricPreset('蓝图铺贴', LyricLayout.tile, LyricEntrance.wipe,
+        LyricExit.none, LyricTreat.gradient, LyricPalette.blueprint, 0.85,
+        transition: LyricTransition.blockWipe),
+    LyricPreset('警示残像', LyricLayout.stack, LyricEntrance.drop,
+        LyricExit.shrink, LyricTreat.strokeFill, LyricPalette.caution, 1.0,
+        sweep: false, transition: LyricTransition.shapeCarry),
+    LyricPreset('薄荷跑马', LyricLayout.marquee, LyricEntrance.spin,
+        LyricExit.none, LyricTreat.marker, LyricPalette.mint, 1.0),
+  ];
+
+  /// 抽一套成套方案。[previousName] 会尽量避开，避免连续两句一模一样。
+  static LyricPreset pickPreset(int seed, {String? previousName}) {
+    var pool = presets;
+    if (previousName != null && pool.length > 1) {
+      final filtered = pool.where((p) => p.name != previousName).toList();
+      if (filtered.isNotEmpty) pool = filtered;
     }
+    final x = math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    final f = x - x.floor(); // [0,1)
+    return pool[(f * pool.length).floor().clamp(0, pool.length - 1)];
+  }
 
-    final layouts = LyricLayout.values;
-    final entrances = LyricEntrance.values;
-    final exits = LyricExit.values;
-    final treats = LyricTreat.values;
-    final palettes = LyricPalette.values;
-    // 转场不参与随机：它描述的是「上一句→这一句」的交接，
-    // 而随机是按当前句种子算的，同一句的转场必须稳定。
-    final transitions = LyricTransition.values;
-
+  /// 把成套方案转成配置。[keepPalette] 非空时保留用户手选的配色：
+  /// 配色控制整屏底色，逐句变化会疯狂闪屏。
+  static LyricEffectConfig fromPreset(LyricPreset p,
+      {LyricPalette? keepPalette, bool random = true}) {
     return LyricEffectConfig(
-      layout: layouts[(h(1) * layouts.length).floor().clamp(0, layouts.length - 1)],
-      entrance: entrances[(h(2) * entrances.length).floor().clamp(0, entrances.length - 1)],
+      layout: p.layout,
+      entrance: p.entrance,
       hold: LyricHold.jitter, // 保持只剩抖动，不参与随机
-      exit: exits[(h(4) * exits.length).floor().clamp(0, exits.length - 1)],
-      treat: treats[(h(5) * treats.length).floor().clamp(0, treats.length - 1)],
-      palette: keepPalette ??
-          palettes[(h(6) * palettes.length).floor().clamp(0, palettes.length - 1)],
-      motion: 0.75 + h(7) * 0.6,
-      sweep: h(8) > 0.25,
-      random: true,
-      fly: h(9) > 0.5,
-      transition: transitions[(h(10) * transitions.length).floor().clamp(0, transitions.length - 1)],
+      exit: p.exit,
+      treat: p.treat,
+      palette: keepPalette ?? p.palette,
+      motion: p.motion,
+      sweep: p.sweep,
+      random: random,
+      fly: p.fly,
+      transition: p.transition,
+    );
+  }
+
+  /// 随机模式：按种子抽一套成套方案。
+  factory LyricEffectConfig.randomized(int seed,
+      {LyricPalette? keepPalette, String? previousName}) {
+    return fromPreset(
+      pickPreset(seed, previousName: previousName),
+      keepPalette: keepPalette,
     );
   }
 

@@ -36,19 +36,25 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
 
   /// 实际用于渲染的配置。
   ///
-  /// 随机模式下按「歌曲 id + 行序号」取一套，保证每句不同、
-  /// 同一句反复渲染时稳定。**必须作为纯函数在 build 里算**：
-  /// 之前用 `_active` 字段 + setState 同步，既在 build 里调 setState
-  /// （框架不允许），又只在随机模式用过之后才回写，
-  /// 导致菜单里改任何选项都不生效。
+  /// 随机模式下按「歌曲 id + 行序号」抽一套成套方案，
+  /// 并避开上一句用过的方案（避免连续两句一模一样）。
+  /// **必须作为纯函数在 build 里算**：之前用 `_active` 字段 +
+  /// setState 同步，既在 build 里调 setState（框架不允许），
+  /// 又只在随机模式用过之后才回写，导致菜单里改任何选项都不生效。
   LyricEffectConfig _effectiveConfig(String musicId, Duration position) {
-    if (!_config.random) return _config;
+    if (!_config.random) {
+      _lastPresetName = null;
+      return _config;
+    }
     final idx = _currentLineIndexOf(position);
-    return LyricEffectConfig.randomized(
-      '$musicId#$idx'.hashCode,
-      keepPalette: _config.palette,
-    );
+    final preset =
+        LyricEffectConfig.pickPreset('$musicId#$idx'.hashCode,
+            previousName: _lastPresetName);
+    _lastPresetName = preset.name;
+    return LyricEffectConfig.fromPreset(preset, keepPalette: _config.palette);
   }
+
+  String? _lastPresetName;
 
   int _currentLineIndexOf(Duration position) {
     if (_lyrics.isEmpty) return 0;
