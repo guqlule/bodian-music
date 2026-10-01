@@ -382,27 +382,27 @@ void paint(Canvas canvas, Size size) {
           Offset(-3.4 * chroma * u, -1.3 * chroma * u));
     }
 
-    // ---- 扫字：两层结构（暗底 + 亮层遮罩）----
+    // ---- 扫字：单遍横向渐变 ----
     //
-    // 参考 folia-major 的 PendoloActiveLyricSweep：
-    // 逐字 lerp 颜色只能让「一个字」内部有渐变，字与字之间仍是硬边，
-    // 视觉上像色块跳变而非扫过。
-    // 正确做法是整句画两遍——底层压暗，上层用横向渐变遮罩
-    // 只露出播放头左侧，这样软边可以横跨整行、跨过字的接缝。
+    // 参考 folia-major 的 PendoloActiveLyricSweep 用「暗底 + 遮罩亮层」
+    // 两遍绘制。这里把渐变右端从 transparent 换成未唱暗色，
+    // 一遍即可得到同样的结果：播放头左侧亮色、右侧暗色、
+    // 中间一段按字号缩放的软边。
+    // 逐字 lerp 颜色是做不到的 —— 那样软边只能落在单个字内部，
+    // 字与字之间仍是硬边，看起来像色块跳变而非扫过。
     final sweep = detailed ? _computeSweep(line, layout, t, dur) : null;
     final baseInk = pal.fg.withValues(alpha: globalAlpha);
+    final dimInk = baseInk.withValues(alpha: baseInk.a * 0.52);
 
     if (sweep != null) {
-      // 底层：整句统一压暗（参考用 0.52，这里同量级）
-      final dim = baseInk.withValues(alpha: baseInk.a * 0.52);
-      _pass(canvas, layout, dim, Offset.zero, weightK, amt, t, false);
-
-      // 上层：横向渐变遮罩，播放头左侧为亮色
       final brightInk = Color.lerp(baseInk, pal.accent, 0.92)!;
-      final shader = _sweepShader(layout, sweep.maskX, sweep.halfBand, brightInk);
+      final shader = _sweepShader(layout, sweep, brightInk, dimInk);
       if (shader != null) {
         _pass(canvas, layout, Colors.white, Offset.zero, weightK, amt, t, true,
             shader: shader);
+      } else {
+        // 还没开唱：整句暗色
+        _pass(canvas, layout, dimInk, Offset.zero, weightK, amt, t, true);
       }
     } else {
       // ---- 主层 ----
@@ -537,22 +537,30 @@ void paint(Canvas canvas, Size size) {
       canvas.translate(0, step * k);
       final s = 1 - k * 0.085;
       canvas.scale(s, s);
+      // grow: false —— 残影不需要「字重生长」那层描边加粗，
+      // 而它会让每个字多画一遍（3 层残影就是多 3N 次排版）。
       _pass(canvas, layout, pal.fg.withValues(alpha: fade), Offset.zero,
-          weightK, amt, t, false);
+          weightK, amt, t, false, grow: false);
       canvas.restore();
     }
   }
 
-  /// 扫字亮层的横向渐变遮罩。
+/// 扫字的横向渐变。
   ///
-  /// 参考 folia-major：`linear-gradient(90deg, #000 …#000, rgba(0,0,0,.84), transparent)`，
-  /// 即播放头左侧完全不透明，到播放头处用一段软边淡出。
+  /// 参考 folia-major 的 CSS mask：
+  ///   linear-gradient(90deg, #000 …#000, rgba(0,0,0,.84) @fill, transparent)
+  /// 即播放头左侧不透明、到播放头处软边淡出。
+  ///
+  /// 差别：参考是把「亮层」用遮罩裁出来，所以底下必须另画一层暗色，
+  /// 一句要画两遍。这里直接把渐变的右端从 transparent 换成未唱暗色，
+  /// **一句只需一遍** —— 视觉等价，主层开销减半。
+  ///
   /// 软边宽度跟字号挂钩（`fontPx * 0.42`，夹在 8~16px），
-  /// 这样大字号有足够过渡、小字号又不会糊成一片。
+  /// 大字号有足够过渡、小字号又不会糊成一片。
   ///
-  /// 返回 null 表示此刻不该有任何亮层（还没开始唱 / 已唱完）。
+  /// 返回 null 表示还没开唱（整句都该是暗色，交给调用方单色绘制）。
   ui.Gradient? _sweepShader(
-      _Layout layout, double maskX, double halfBand, Color bright) {
+    _Layout layout, double maskX, Color bright, Color dim) {
     if (layout.glyphs.isEmpty) return null;
     final left = layout.glyphs.first.x;
     final right = layout.glyphs.last.x + layout.glyphs.last.w;
@@ -564,7 +572,7 @@ void paint(Canvas canvas, Size size) {
 
     final edge = (layout.size * 0.42).clamp(8.0, 16.0);
 
-    // 唱完整句后播放头是 infinity：应保持整句常亮，而不是把亮层撤掉。
+    // 唱完整句后播放头是 infinity：应保持整句常亮。
     // 参考实现同样在时间超出末字后返回 fullWidth（整行填满）。
     final mx = maskX.isInfinite ? right + edge : maskX;
 
@@ -574,9 +582,8 @@ void paint(Canvas canvas, Size size) {
     final s0 = p(mx - edge);
     final s1 = p(mx + edge);
 
-    final transparent = bright.withValues(alpha: 0.0);
     final stops = <double>[0.0, s0, s1, 1.0];
-    final colors = <Color>[bright, bright, transparent, transparent];
+    final colors = <Color>[bright, bright, dim, dim];
 
     // 渐变 stop 必须严格递增且落在 [0,1]，否则 Flutter 会抛断言。
     // s0 <= s1 由 edge > 0 保证，这里只处理边界重合导致的重复 stop。
@@ -592,7 +599,7 @@ void paint(Canvas canvas, Size size) {
     return ui.Gradient.linear(
       Offset(left, 0),
       Offset(right, 0),
-      cleanColors,
+cleanColors,
       cleanStops,
     );
   }
@@ -775,16 +782,13 @@ void paint(Canvas canvas, Size size) {
 
   // ---------------- 扫字播放头 ----------------
   ///
-  /// 返回 (播放头像素位置, 软带半宽)；未启用时 second 为 null。
+  /// 返回播放头的像素位置；null 表示不做扫字（关闭开关 / 空行 /
+  /// 邻句的简化绘制）。
   ///
   /// 优先用逐字时间戳（KRC/QRC）：
   ///   maskX = 已完成字的累计宽度 + 当前字内进度 × 当前字宽
-  /// 软带半宽固定为「行内平均字宽」——若用当前字宽，
-  /// 字切换瞬间半宽突变会让边缘 alpha 断崖闪烁。
-  ///
   /// 无逐字时间戳时退化为行级进度（按本行已唱比例扫过整行）。
-  ({double maskX, double halfBand})? _computeSweep(
-      LyricLine line, _Layout layout, double t, double dur) {
+  double? _computeSweep(LyricLine line, _Layout layout, double t, double dur) {
     if (!config.sweep) return null;
     if (layout.glyphs.isEmpty) return null;
     if (line.hasWords && line.words!.isNotEmpty) {
@@ -827,21 +831,15 @@ void paint(Canvas canvas, Size size) {
         maskX = w.x + w.w * intra;
       }
 
-      // 行内平均字宽
-      final totalW = layout.glyphs.isEmpty
-          ? 0.0
-          : layout.glyphs.last.x + layout.glyphs.last.w;
-      final meanW = layout.glyphs.isEmpty
-          ? 0.0
-          : (totalW / layout.glyphs.length);
-      return (maskX: maskX, halfBand: meanW);
+      // 行平均字宽已不再需要：软边现在按字号取（见 _sweepShader）
+      return maskX;
     }
 
     // 行级退化：按本行进度扫过整行
     final p = _cl(t / math.max(dur, 0.01));
     final totalW =
         layout.glyphs.isEmpty ? 0.0 : layout.glyphs.last.x + layout.glyphs.last.w;
-    return (maskX: totalW * p, halfBand: totalW * 0.18);
+    return totalW * p;
   }
 
   // ---------------- 入场 ----------------
@@ -1117,6 +1115,7 @@ void paint(Canvas canvas, Size size) {
     double t,
     bool isMain, {
     ui.Gradient? shader,
+    bool grow = true,
   }) {
     if (layout.glyphs.isEmpty) return;
 final pal = config.palette;
@@ -1259,7 +1258,7 @@ case LyricTreat.gradient:
           (shader != null && !_isStrokeTreat(treat)) ? (Paint()..shader = shader) : null;
 
       // 字重生长：描边加粗（仅主层）
-      if (isMain && weightK > 0.02 && treat != LyricTreat.outline && treat != LyricTreat.neon) {
+      if (isMain && grow && weightK > 0.02 && treat != LyricTreat.outline && treat != LyricTreat.neon) {
         st = st.copyWith(
           foreground: sweepPaint ??
               (Paint()
