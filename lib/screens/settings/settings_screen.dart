@@ -8,6 +8,7 @@ import '../../services/player/player_service.dart';
 import '../../services/sync/sync_service.dart';
 import '../../core/storage/storage_service.dart';
 import '../../core/theme/app_theme.dart';
+import '../pv_lyrics/lyric_effect_config.dart';
 
 const _qualityOptions = <(String, String, String)>[
   ('128k', '标准', '128kbps'),
@@ -141,6 +142,13 @@ class SettingsScreen extends ConsumerWidget {
                 title: '车机模式',
                 subtitle: _carModeLabel(settings.carMode),
                 onTap: () => _showCarModeSheet(context, ref, settings.carMode),
+              ),
+              const _Divider(),
+              _buildTapTile(
+                icon: Icons.auto_awesome_rounded,
+                title: '歌词特效',
+                subtitle: '全屏歌词的版式 / 动画 / 配色',
+                onTap: () => showLyricEffectSheet(context),
               ),
             ],
           ),

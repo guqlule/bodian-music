@@ -7,12 +7,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/app_providers.dart';
 import '../../services/lyric/lyric_parser.dart';
 import 'jizura_lyrics_view.dart';
+import 'lyric_effect_config.dart';
 
 /// 全屏特效歌词页（JIZURA 风格）
 ///
-/// 参考 852wa/JIZURA 的视觉语言：
-/// 屏幕上只有当前一句，巨号铺满，色差错位 + 逐字波浪 + 弹跳入场。
-/// 没有上下句滚动列表。
+/// 屏幕上只有当前一句，巨号铺满，色差错位 / 逐字波浪 / 弹跳入场等特效。
+/// 右上角菜单可切换版式、入场、保持、出场、文本特效、配色与动效强度。
 class PvLyricsScreen extends ConsumerStatefulWidget {
   const PvLyricsScreen({super.key});
 
@@ -22,12 +22,15 @@ class PvLyricsScreen extends ConsumerStatefulWidget {
 
 class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
   List<LyricLine> _lyrics = [];
+  LyricEffectConfig _config = const LyricEffectConfig();
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       _applyLyric(ref.read(lyricProvider).valueOrNull?['lyric'] ?? '');
+      final cfg = await LyricEffectConfig.load();
+      if (mounted) setState(() => _config = cfg);
     });
   }
 
@@ -39,6 +42,17 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
     setState(() => _lyrics = parsed);
   }
 
+  void _openEffectSheet() {
+    showLyricEffectSheet(context).then((_) {
+      if (mounted) _refreshConfig();
+    });
+  }
+
+  Future<void> _refreshConfig() async {
+    final cfg = await LyricEffectConfig.load();
+    if (mounted) setState(() => _config = cfg);
+  }
+
   @override
   Widget build(BuildContext context) {
     final position = ref.watch(positionProvider).valueOrNull ?? Duration.zero;
@@ -47,25 +61,27 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
       _applyLyric(next.valueOrNull?['lyric'] ?? '');
     });
 
+    final pal = _config.palette;
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-        backgroundColor: const Color(0xFF060607),
+        backgroundColor: pal.bg,
         body: Stack(
           fit: StackFit.expand,
           children: [
-            // 封面底纹：重度模糊 + 极低透明度，只做氛围不抢歌词
             const _CoverTexture(),
             SafeArea(
               child: Column(
                 children: [
-                  const _TopBar(),
+                  _TopBar(onMenu: _openEffectSheet),
                   Expanded(
                     child: _lyrics.isEmpty
                         ? const SizedBox.shrink()
                         : JizuraLyricsView(
                             lines: _lyrics,
                             position: position,
+                            config: _config,
                             onSeek: (t) =>
                                 ref.read(playerServiceProvider).seek(t),
                           ),
@@ -80,16 +96,17 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
   }
 }
 
-/// 顶部栏
+/// 顶部栏（含特效菜单按钮）
 class _TopBar extends ConsumerWidget {
-  const _TopBar();
+  final VoidCallback onMenu;
+  const _TopBar({required this.onMenu});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final music = ref.watch(currentMusicProvider).valueOrNull;
     final singer = music?.singer ?? '';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 4, 20, 0),
+      padding: const EdgeInsets.fromLTRB(4, 4, 8, 0),
       child: Row(
         children: [
           IconButton(
@@ -128,13 +145,19 @@ class _TopBar extends ConsumerWidget {
               ],
             ),
           ),
+          IconButton(
+            tooltip: '特效',
+            icon: const Icon(Icons.auto_awesome_rounded,
+                size: 20, color: Colors.white54),
+            onPressed: onMenu,
+          ),
         ],
       ),
     );
   }
 }
 
-/// 封面底纹：模糊封面 + 极低透明度
+/// 封面底纹：模糊封面 + 极低透明度，只做氛围
 class _CoverTexture extends ConsumerWidget {
   const _CoverTexture();
 
