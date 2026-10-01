@@ -23,9 +23,6 @@ class PvLyricsScreen extends ConsumerStatefulWidget {
 class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
   List<LyricLine> _lyrics = [];
   LyricEffectConfig _config = const LyricEffectConfig();
-  /// 随机模式下当前使用的特效（每首歌一套）
-  LyricEffectConfig _active = const LyricEffectConfig();
-  String _randomSeedKey = '';
 
   @override
   void initState() {
@@ -37,26 +34,20 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
     });
   }
 
-  /// 随机模式：按「歌曲 id + 歌词行序号」生成稳定的一套特效。
-///
-/// 种子带行号，所以**每一句都会随机到不同效果**；
-/// 同时同一句在反复渲染时保持稳定（不会每帧乱跳）。
-void _syncRandom(String musicId, int lineIndex) {
-    if (!_config.random) {
-      if (_randomSeedKey.isNotEmpty) {
-        _randomSeedKey = '';
-        setState(() => _active = _config);
-      }
-      return;
-    }
-    final key = '$musicId#$lineIndex';
-    if (key == _randomSeedKey) return;
-    _randomSeedKey = key;
-    final seed = key.hashCode;
-    setState(() => _active = LyricEffectConfig.randomized(
-          seed,
-          keepPalette: _config.palette,
-        ));
+  /// 实际用于渲染的配置。
+  ///
+  /// 随机模式下按「歌曲 id + 行序号」取一套，保证每句不同、
+  /// 同一句反复渲染时稳定。**必须作为纯函数在 build 里算**：
+  /// 之前用 `_active` 字段 + setState 同步，既在 build 里调 setState
+  /// （框架不允许），又只在随机模式用过之后才回写，
+  /// 导致菜单里改任何选项都不生效。
+  LyricEffectConfig _effectiveConfig(String musicId, Duration position) {
+    if (!_config.random) return _config;
+    final idx = _currentLineIndexOf(position);
+    return LyricEffectConfig.randomized(
+      '$musicId#$idx'.hashCode,
+      keepPalette: _config.palette,
+    );
   }
 
   int _currentLineIndexOf(Duration position) {
@@ -76,7 +67,10 @@ void _syncRandom(String musicId, int lineIndex) {
   }
 
   void _openEffectSheet() {
-    showLyricEffectSheet(context).then((_) {
+    // 面板开着就实时推给本页，关掉后再兜底重读一次
+    showLyricEffectSheet(context, onChanged: (c) {
+      if (mounted) setState(() => _config = c);
+    }).then((_) {
       if (mounted) _refreshConfig();
     });
   }
@@ -91,9 +85,6 @@ void _syncRandom(String musicId, int lineIndex) {
     final position = ref.watch(positionProvider).valueOrNull ?? Duration.zero;
     final musicId = ref.watch(currentMusicProvider).valueOrNull?.id ?? '';
 
-    // 随机模式：每一句歌词随机一套特效（种子含行号）
-    _syncRandom(musicId, _currentLineIndexOf(position));
-
     ref.listen(lyricProvider, (prev, next) {
       _applyLyric(next.valueOrNull?['lyric'] ?? '');
     });
@@ -101,6 +92,7 @@ void _syncRandom(String musicId, int lineIndex) {
     // 配色跟随用户手动选择，不参与逐句随机——
     // 否则每句都换整屏底色会疯狂闪屏。
     final pal = _config.palette;
+    final effective = _effectiveConfig(musicId, position);
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
@@ -119,7 +111,7 @@ void _syncRandom(String musicId, int lineIndex) {
                         : JizuraLyricsView(
                             lines: _lyrics,
                             position: position,
-                            config: _active,
+                            config: effective,
                             onSeek: (t) =>
                                 ref.read(playerServiceProvider).seek(t),
                           ),

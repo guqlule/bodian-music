@@ -286,7 +286,11 @@ class LyricEffectConfig {
 }
 
 /// 歌词特效选择面板（供歌词页与设置页共用）
-Future<void> showLyricEffectSheet(BuildContext context) async {
+///
+/// [onChanged] 每次改动立即回调，面板还开着就已经把新配置推给调用方。
+/// 不传则只落盘（设置页只需持久化，不需要实时预览）。
+Future<void> showLyricEffectSheet(BuildContext context,
+    {ValueChanged<LyricEffectConfig>? onChanged}) async {
   var cfg = await LyricEffectConfig.load();
   if (!context.mounted) return;
 
@@ -302,6 +306,8 @@ Future<void> showLyricEffectSheet(BuildContext context) async {
         void apply(LyricEffectConfig c) {
           setSheetState(() => cfg = c);
           c.save();
+          // 立即生效：不等面板关闭，调用方当场就能重建
+          onChanged?.call(c);
         }
 
         return SafeArea(
