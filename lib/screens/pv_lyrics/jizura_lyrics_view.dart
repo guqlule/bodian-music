@@ -278,12 +278,32 @@ final enter = _cl(t / inDur);
           Offset(-3.4 * chroma * u, -1.3 * chroma * u), weightK, amt, t, false);
     }
 
-    // ---- 扫字：算出播放头位置（像素），逐字插值 alpha ----
+    // ---- 扫字：两层结构（暗底 + 亮层遮罩）----
+    //
+    // 参考 folia-major 的 PendoloActiveLyricSweep：
+    // 逐字 lerp 颜色只能让「一个字」内部有渐变，字与字之间仍是硬边，
+    // 视觉上像色块跳变而非扫过。
+    // 正确做法是整句画两遍——底层压暗，上层用横向渐变遮罩
+    // 只露出播放头左侧，这样软边可以横跨整行、跨过字的接缝。
     final sweep = _computeSweep(line, layout, t, dur);
+    final baseInk = pal.fg.withValues(alpha: globalAlpha);
 
-    // ---- 主层 ----
-    _pass(canvas, layout, pal.fg.withValues(alpha: globalAlpha), Offset.zero,
-        weightK, amt, t, true, sweep);
+    if (sweep != null) {
+      // 底层：整句统一压暗（参考用 0.52，这里同量级）
+      final dim = baseInk.withValues(alpha: baseInk.a * 0.52);
+      _pass(canvas, layout, dim, Offset.zero, weightK, amt, t, false);
+
+      // 上层：横向渐变遮罩，播放头左侧为亮色
+      final brightInk = Color.lerp(baseInk, pal.accent, 0.92)!;
+      final shader = _sweepShader(layout, sweep.maskX, sweep.halfBand, brightInk);
+      if (shader != null) {
+        _pass(canvas, layout, Colors.white, Offset.zero, weightK, amt, t, true,
+            shader: shader);
+      }
+    } else {
+      // ---- 主层 ----
+      _pass(canvas, layout, baseInk, Offset.zero, weightK, amt, t, true);
+    }
 
     canvas.restore();
 
@@ -388,6 +408,58 @@ final enter = _cl(t / inDur);
           weightK, amt, t, false);
       canvas.restore();
     }
+  }
+
+  /// 扫字亮层的横向渐变遮罩。
+  ///
+  /// 参考 folia-major：`linear-gradient(90deg, #000 …#000, rgba(0,0,0,.84), transparent)`，
+  /// 即播放头左侧完全不透明，到播放头处用一段软边淡出。
+  /// 软边宽度跟字号挂钩（`fontPx * 0.42`，夹在 8~16px），
+  /// 这样大字号有足够过渡、小字号又不会糊成一片。
+  ///
+  /// 返回 null 表示此刻不该有任何亮层（还没开始唱 / 已唱完）。
+  ui.Gradient? _sweepShader(
+      _Layout layout, double maskX, double halfBand, Color bright) {
+    if (layout.glyphs.isEmpty) return null;
+    final left = layout.glyphs.first.x;
+    final right = layout.glyphs.last.x + layout.glyphs.last.w;
+    final totalW = right - left;
+    if (totalW <= 1) return null;
+
+    // 尚未开唱
+    if (maskX < 0) return null;
+    // 已经唱完整句，没必要再画亮层
+    if (maskX >= right) return null;
+
+    final edge = (layout.size * 0.42).clamp(8.0, 16.0);
+
+    // 归一化播放头与软边到 [0,1]
+    double p(double x) => ((x - left) / totalW).clamp(0.0, 1.0);
+
+    final s0 = p(maskX - edge);
+    final s1 = p(maskX + edge);
+
+    final transparent = bright.withValues(alpha: 0.0);
+    final stops = <double>[0.0, s0, s1, 1.0];
+    final colors = <Color>[bright, bright, transparent, transparent];
+
+    // 渐变 stop 必须严格递增且落在 [0,1]，否则 Flutter 会抛断言。
+    // s0 <= s1 由 edge > 0 保证，这里只处理边界重合导致的重复 stop。
+    final cleanStops = <double>[];
+    final cleanColors = <Color>[];
+    for (int i = 0; i < stops.length; i++) {
+      if (i > 0 && stops[i] <= cleanStops.last) continue;
+      cleanStops.add(stops[i]);
+      cleanColors.add(colors[i]);
+    }
+    if (cleanStops.length < 2) return null;
+
+    return ui.Gradient.linear(
+      Offset(left, 0),
+      Offset(right, 0),
+      cleanColors,
+      cleanStops,
+    );
   }
 
   // ---------------- Z 轴穿越（镜头追踪）----------------
@@ -530,21 +602,6 @@ final enter = _cl(t / inDur);
     final totalW =
         layout.glyphs.isEmpty ? 0.0 : layout.glyphs.last.x + layout.glyphs.last.w;
     return (maskX: totalW * p, halfBand: totalW * 0.18);
-  }
-
-  /// X 位置处的扫光权重 0~1（1 = 已唱）
-  static double _sweepWeight(double x, double maskX, double halfBand) {
-    if (halfBand <= 0) return x <= maskX ? 1.0 : 0.0;
-    if (maskX.isInfinite) return 1.0;
-    if (maskX < 0) return 0.0;
-    final bandStart = maskX - halfBand;
-    final bandSpan = halfBand * 2;
-    if (x <= bandStart) return 1.0;
-    final k = (x - bandStart) / bandSpan;
-    if (k >= 1.0) return 0.0;
-    // smoothstep 让亮暗过渡更柔和
-    final e = k * k * (3 - 2 * k);
-    return 1.0 - e;
   }
 
   // ---------------- 入场 ----------------
@@ -769,9 +826,9 @@ final W = size.width;
     double weightK,
     double amt,
     double t,
-    bool isMain, [
-    ({double maskX, double halfBand})? sweep,
-  ]) {
+    bool isMain, {
+    ui.Gradient? shader,
+  }) {
     if (layout.glyphs.isEmpty) return;
     final pal = config.palette;
     final treat = config.treat;
@@ -797,22 +854,9 @@ final W = size.width;
       final dx = (h - 0.5) * g.fs * 0.05 * amt * motion;
       final dy = (h2 - 0.5) * g.fs * 0.05 * amt * motion;
 
-// 高亮特效 / 扫字：已唱部分渐变到强调色
+// 高亮特效：已唱部分按整句比例渐变到强调色
       var glyphColor = color;
-      double sweepL = 0, sweepR = 0;
-      var sweepDim = color;
-      var sweepBright = color;
-      if (isMain && sweep != null) {
-        // 在字的左右边缘分别采样播放头，得到字内渐变
-        sweepL = _sweepWeight(g.x, sweep.maskX, sweep.halfBand);
-        sweepR = _sweepWeight(g.x + g.w, sweep.maskX, sweep.halfBand);
-        // 未唱压暗 + 已唱转强调色。
-        // 明暗差必须足够大：当某个配色的 accent 和 fg 接近时，
-        // 只做颜色 lerp 会完全看不出扫字发生过。
-        sweepDim = color.withValues(alpha: color.a * 0.42);
-        sweepBright = Color.lerp(color, pal.accent, 0.95)!;
-        glyphColor = Color.lerp(sweepDim, sweepBright, sweepL)!;
-      } else if (isMain && treat == LyricTreat.marker) {
+      if (isMain && treat == LyricTreat.marker) {
         final w = _wordProgressFraction(g);
         glyphColor = Color.lerp(color, pal.accent, w)!;
       }
@@ -948,23 +992,15 @@ case LyricTreat.gradient:
 
 final p = Offset(g.x + dx, g.y + dy);
 
-      // 扫字：字内渐变（已唱→未唱），保证扫过单个字时是渐变而非跳变
-      if (sweep != null && (sweepL - sweepR).abs() > 0.02 && !_isStrokeTreat(treat)) {
-        final leftC = Color.lerp(sweepDim, sweepBright, sweepL)!;
-        final rightC = Color.lerp(sweepDim, sweepBright, sweepR)!;
-        final sweepStyle = TextStyle(
-          fontSize: g.fs,
-          fontWeight: FontWeight.w900,
-          height: 1.0,
-          shadows: st.shadows,
-          foreground: Paint()
-            ..shader = ui.Gradient.linear(
-              Offset(p.dx, 0),
-              Offset(p.dx + math.max(g.w, 1.0), 0),
-              [leftC, rightC],
-            ),
+      // 扫字亮层：整句用横向渐变遮罩绘制。
+      // 遮罩跨整行，所以软边能横跨字的接缝——这正是逐字上色的做不到的。
+      // 描边类特效（描边/霓虹）保持原样，遮罩只作用于填充。
+      if (shader != null && !_isStrokeTreat(treat)) {
+        st = st.copyWith(
+          foreground: Paint()..shader = shader,
+          color: null,
         );
-        tp.text = TextSpan(text: g.ch, style: sweepStyle);
+        tp.text = TextSpan(text: g.ch, style: st);
         tp.layout();
         tp.paint(canvas, p);
         continue;
@@ -979,7 +1015,10 @@ final p = Offset(g.x + dx, g.y + dy);
           fontSize: g.fs,
           fontWeight: FontWeight.w900,
           height: 1.0,
-          color: glyphColor,
+          foreground: shader != null
+              ? (Paint()..shader = shader)
+              : null,
+          color: shader != null ? null : glyphColor,
         );
         tp.text = TextSpan(text: g.ch, style: fillStyle);
         tp.layout();
