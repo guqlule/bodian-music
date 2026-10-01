@@ -578,28 +578,11 @@ class _JizuraPainter extends CustomPainter {
     for (int gi = 0; gi < shown; gi++) {
       final g = layout.glyphs[gi];
 
-// 逐字波浪（hold 决定形态）
-      double dy = 0, dx = 0, sc = 1.0;
-      switch (config.hold) {
-        case LyricHold.wave:
-          dy = math.sin(t * 7 + g.i * 0.75) * g.fs * 0.07 * amt * motion;
-          break;
-        case LyricHold.breathe:
-          sc = 1 + 0.035 * math.sin(t * math.pi * 1.8) * amt * motion;
-          break;
-        case LyricHold.jitter:
-          final h = _hash(gi * 13 + t.toInt() * 7);
-          dx = (h - 0.5) * g.fs * 0.05 * amt * motion;
-          dy = (_hash(gi * 29 + t.toInt() * 11) - 0.5) * g.fs * 0.05 * amt * motion;
-          break;
-        case LyricHold.drift:
-          dx = (1 - 0.5) * 0;
-          dx = math.sin(t * 0.8) * g.fs * 0.25 * amt * motion;
-          sc = 1 + 0.05 * amt * motion;
-          break;
-        case LyricHold.still:
-          break;
-      }
+// 保持动效：目前只有抖动，低频位置随机偏移
+      final h = _hash(gi * 13 + t.toInt() * 7);
+      final h2 = _hash(gi * 29 + t.toInt() * 11);
+      final dx = (h - 0.5) * g.fs * 0.05 * amt * motion;
+      final dy = (h2 - 0.5) * g.fs * 0.05 * amt * motion;
 
 // 高亮特效 / 扫字：已唱部分渐变到强调色
       var glyphColor = color;
@@ -788,20 +771,9 @@ final p = Offset(g.x + dx, g.y + dy);
         continue;
       }
 
-      if (sc != 1.0) {
-        canvas.save();
-        canvas.translate(p.dx + g.w / 2, p.dy);
-        canvas.scale(sc, sc);
-        canvas.translate(-g.w / 2, 0);
-        tp.text = TextSpan(text: g.ch, style: st);
-        tp.layout();
-        tp.paint(canvas, Offset(-tp.width / 2, 0));
-        canvas.restore();
-      } else {
-        tp.text = TextSpan(text: g.ch, style: st);
-        tp.layout();
-        tp.paint(canvas, p);
-      }
+tp.text = TextSpan(text: g.ch, style: st);
+      tp.layout();
+      tp.paint(canvas, p);
     }
 
     canvas.restore();

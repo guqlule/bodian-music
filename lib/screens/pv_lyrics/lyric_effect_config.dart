@@ -40,12 +40,13 @@ enum LyricEntrance {
 }
 
 /// 保持段动效
+/// 保持动效。当前只保留抖动。
+///
+/// 旧版本还有波浪/呼吸/漂移/静止，现已移除；
+/// 枚举值保留一个成员是为了让已保存的旧配置（旧值为 wave/breathe/…）
+/// 能通过 pick() 平滑回落到 jitter，而不是变成 null。
 enum LyricHold {
-  wave('波浪', '逐字正弦起伏'),
-  breathe('呼吸', '整句缓慢缩放'),
-  jitter('抖动', '低频位置抖动'),
-  drift('漂移', '缓慢横移并放大'),
-  still('静止', '不做额外动效');
+  jitter('抖动', '低频位置抖动');
 
   const LyricHold(this.label, this.desc);
   final String label;
@@ -122,7 +123,7 @@ class LyricEffectConfig {
   const LyricEffectConfig({
     this.layout = LyricLayout.huge,
     this.entrance = LyricEntrance.pop,
-    this.hold = LyricHold.wave,
+    this.hold = LyricHold.jitter,
     this.exit = LyricExit.shrink,
     this.treat = LyricTreat.glow,
     this.palette = LyricPalette.noir,
@@ -179,7 +180,7 @@ class LyricEffectConfig {
     return LyricEffectConfig(
       layout: pick(LyricLayout.values, json['layout'] as String?, LyricLayout.huge),
       entrance: pick(LyricEntrance.values, json['entrance'] as String?, LyricEntrance.pop),
-      hold: pick(LyricHold.values, json['hold'] as String?, LyricHold.wave),
+      hold: pick(LyricHold.values, json['hold'] as String?, LyricHold.jitter),
       exit: pick(LyricExit.values, json['exit'] as String?, LyricExit.shrink),
       treat: pick(LyricTreat.values, json['treat'] as String?, LyricTreat.glow),
       palette: pick(LyricPalette.values, json['palette'] as String?, LyricPalette.noir),
@@ -202,7 +203,6 @@ class LyricEffectConfig {
 
     final layouts = LyricLayout.values;
     final entrances = LyricEntrance.values;
-    final holds = LyricHold.values;
     final exits = LyricExit.values;
     final treats = LyricTreat.values;
     final palettes = LyricPalette.values;
@@ -210,7 +210,7 @@ class LyricEffectConfig {
     return LyricEffectConfig(
       layout: layouts[(h(1) * layouts.length).floor().clamp(0, layouts.length - 1)],
       entrance: entrances[(h(2) * entrances.length).floor().clamp(0, entrances.length - 1)],
-      hold: holds[(h(3) * holds.length).floor().clamp(0, holds.length - 1)],
+      hold: LyricHold.jitter, // 保持只剩抖动，不参与随机
       exit: exits[(h(4) * exits.length).floor().clamp(0, exits.length - 1)],
       treat: treats[(h(5) * treats.length).floor().clamp(0, treats.length - 1)],
       palette: keepPalette ??
@@ -330,15 +330,6 @@ Future<void> showLyricEffectSheet(BuildContext context) async {
                         descOf: (e) => e.desc,
                         isSelected: (e) => e == cfg.entrance,
                         onSelect: (v) => apply(cfg.copyWith(entrance: v)),
-                      ),
-                      _Section<LyricHold>(
-                        title: '保持',
-                        values: LyricHold.values,
-                        cfg: cfg,
-                        labelOf: (e) => e.label,
-                        descOf: (e) => e.desc,
-                        isSelected: (e) => e == cfg.hold,
-                        onSelect: (v) => apply(cfg.copyWith(hold: v)),
                       ),
                       _Section<LyricExit>(
                         title: '出场',
