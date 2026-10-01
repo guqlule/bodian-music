@@ -8,13 +8,13 @@ import '../../services/lyric/lyric_parser.dart';
 
 /// Apple Music 风格歌词视图
 ///
-/// 移植自 md3Music 的 apple_lyrics_view 实现要点：
-/// - 单个 CustomPainter 绘制全部歌词，无 ListView / ScrollController
-/// - 文本统一白色，靠 alpha 渐变表达层次（不用不同颜色）
-/// - 非当前行按行距分级高斯模糊（σ = 1 + |Δline|）
+/// 设计要点：
+/// - 单 CustomPainter 绘制全部歌词，无 ListView / ScrollController
+/// - 文本统一白色，仅用 alpha 表达层次（不做大范围高斯模糊，保证可读）
+/// - 缩放 + alpha 按行距**平滑衰减**，没有突兀断层
 /// - 逐字歌词用连续 alpha 播放头 + 软过渡带扫过
 /// - 滚动由解析弹簧驱动，欠阻尼有回弹
-/// - ShaderMask 做上下 24px 渐隐
+/// - ShaderMask 上下渐隐
 class AppleLyricsView extends StatefulWidget {
   final List<LyricLine> lines;
   final Duration position;
@@ -36,31 +36,29 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   late final Ticker _ticker;
   final ValueNotifier<int> _frame = ValueNotifier<int>(0);
 
-  // ---- 布局常量（对齐参考项目的默认值）----
+  // ---- 布局常量 ----
   static const double _fontSize = 27.0;
-  static const double _lineHeightMultiplier = 1.9; // 行间距倍率
-  static const double _inactiveScale = 0.85; // 非当前行缩放
-  static const double _alignPosition = 0.35; // 当前行锚定在视口 35% 处
-  static const double _leftPaddingEm = 1.0; // 左内边距 = 1em
-  static const double _maxLiftPx = -3.0; // 已唱字上浮
-  static const double _overscan = 300.0; // 视口外剔除缓冲
+  static const double _lineSpacing = 1.62; // 行高倍率（紧凑，接近 Apple Music）
+  static const double _inactiveScale = 0.86;
+  static const double _alignPosition = 0.36; // 当前行锚定在视口 36%
+  static const double _leftPaddingEm = 1.1;
+  static const double _maxLiftPx = -3.0;
+  static const double _overscan = 240.0;
 
-  // ---- 弹簧状态 ----
-  final _Spring _posY = _Spring(mass: 1, stiffness: 120, damping: 24.0);
+  // ---- 弹簧 ----
+  final _Spring _posY = _Spring(mass: 1, stiffness: 130, damping: 26.0);
   final List<_Spring> _lineScales = [];
 
   // ---- 几何缓存 ----
-  List<double> _lineTops = [];
-  List<double> _lineHeights = [];
+  final List<double> _lineTops = [];
+  final List<double> _lineHeights = [];
   double _viewportH = 0;
-  double _viewportW = 0;
 
   // ---- 交互 ----
   double _dragTotal = 0;
   bool _userScrolling = false;
   int _autoReturnMs = 0;
   Duration _lastPos = Duration.zero;
-
   int _currentIndex = -1;
 
   @override
@@ -83,39 +81,36 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     super.dispose();
   }
 
-  double get _lineHeight => _fontSize * _lineHeightMultiplier;
+  double get _rowHeight => _fontSize * _lineSpacing;
 
   void _rebuild() {
-    _lineTops = <double>[];
-    _lineHeights = <double>[];
+    _lineTops.clear();
+    _lineHeights.clear();
     var y = 0.0;
     for (final l in widget.lines) {
       final hasTrans = l.translation != null && l.translation!.isNotEmpty;
-      // 当前行额外为翻译行预留高度
-      final h = _lineHeight + (hasTrans ? _fontSize * 0.95 : 0);
+      final h = _rowHeight + (hasTrans ? _fontSize * 0.9 : 0);
       _lineTops.add(y);
       _lineHeights.add(h);
       y += h;
     }
-    // 每行一个缩放弹簧（欠阻尼，换行时有回弹）
     while (_lineScales.length < widget.lines.length) {
       _lineScales.add(_Spring(
         mass: 2,
-        stiffness: 100,
-        damping: 25,
+        stiffness: 120,
+        damping: 26,
         initial: _inactiveScale,
       ));
     }
     if (_lineScales.length > widget.lines.length) {
       _lineScales.removeRange(widget.lines.length, _lineScales.length);
     }
-    _posY.setPosition(_posY.position, 0);
   }
 
   double _topOf(int i) => i < _lineTops.length ? _lineTops[i] : 0.0;
-  double _heightOf(int i) => i < _lineHeights.length ? _lineHeights[i] : _lineHeight;
+  double _heightOf(int i) =>
+      i < _lineHeights.length ? _lineHeights[i] : _rowHeight;
 
-  /// 当前行锚定目标：使该行中心落在视口 35% 高度
   double _targetY(int index) {
     if (index < 0) return 0;
     return -(_topOf(index) + _heightOf(index) / 2 - _viewportH * _alignPosition);
@@ -124,21 +119,16 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   void _onTick(Duration elapsed) {
     final dt = (elapsed.inMicroseconds / 1e6).clamp(0.0, 0.05);
 
-    // 1) 同步当前行
     final pos = widget.position;
     if (pos != _lastPos) {
       _lastPos = pos;
-      _currentIndex = _findIndex(pos);
-      if (!_userScrolling) {
-        _posY.setTarget(_targetY(_currentIndex));
-      }
-      // 自动回位计时
-      if (_userScrolling && _autoReturnMs <= 0) {
-        _autoReturnMs = 3000;
+      final idx = _findIndex(pos);
+      if (idx != _currentIndex) {
+        _currentIndex = idx;
+        if (!_userScrolling) _posY.setTarget(_targetY(idx));
       }
     }
 
-    // 2) 用户松手后 3s 自动回位
     if (_userScrolling && _autoReturnMs > 0) {
       _autoReturnMs -= (dt * 1000).round();
       if (_autoReturnMs <= 0) {
@@ -147,7 +137,6 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
       }
     }
 
-    // 3) 推进弹簧
     _posY.step(dt);
     for (int i = 0; i < _lineScales.length; i++) {
       _lineScales[i].setTarget(i == _currentIndex ? 1.0 : _inactiveScale);
@@ -158,14 +147,10 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   }
 
   int _findIndex(Duration pos) {
-    var idx = -1;
     for (int i = widget.lines.length - 1; i >= 0; i--) {
-      if (pos >= widget.lines[i].time) {
-        idx = i;
-        break;
-      }
+      if (pos >= widget.lines[i].time) return i;
     }
-    return idx;
+    return -1;
   }
 
   // ---------------- 手势 ----------------
@@ -174,13 +159,13 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
     _userScrolling = true;
     _autoReturnMs = 3000;
     _dragTotal += d.primaryDelta ?? 0;
-    _posY.setPosition(_posY.position + (d.primaryDelta ?? 0), _posY.velocity);
+    _posY.setPosition(
+        _posY.position + (d.primaryDelta ?? 0), _posY.velocity);
   }
 
   void _onDragEnd(DragEndDetails d) {
-    // 惯性：velocity × 0.3s，钳制 ±300px（AMLL 标准）
     final v = d.velocity.pixelsPerSecond.dy;
-    final inertia = (v * 0.3).clamp(-300.0, 300.0);
+    final inertia = (v * 0.25).clamp(-240.0, 240.0);
     if (inertia.abs() > 5) {
       final cur = _posY.position;
       _posY.setPosition(cur, v);
@@ -191,7 +176,7 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   void _onTapUp(TapUpDetails d) {
     if (_dragTotal.abs() > 10) {
       _dragTotal = 0;
-      return; // 是滑动不是点击
+      return;
     }
     _dragTotal = 0;
     final idx = _hitTest(d.localPosition);
@@ -205,10 +190,9 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
 
   int _hitTest(Offset p) {
     if (_viewportH <= 0) return -1;
-    // 反解：p.y = top + height/2 + posY
     final contentY = p.dy - _posY.position;
     for (int i = widget.lines.length - 1; i >= 0; i--) {
-      if (contentY >= _topOf(i) - _lineHeight * 0.5) return i;
+      if (contentY >= _topOf(i) - _rowHeight * 0.5) return i;
     }
     return -1;
   }
@@ -217,10 +201,8 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        _viewportW = constraints.maxWidth;
         _viewportH = constraints.maxHeight;
-        // 首次布局后对齐当前行
-        if (_lineScales.isNotEmpty && _posY.position == 0 && _currentIndex >= 0) {
+        if (_currentIndex >= 0 && _lineScales.isNotEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _posY.setTarget(_targetY(_currentIndex));
           });
@@ -232,9 +214,8 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
           onVerticalDragUpdate: _onDragUpdate,
           onVerticalDragEnd: _onDragEnd,
           child: ShaderMask(
-            // 上下 24px alpha 渐隐
             shaderCallback: (bounds) {
-              final r = (24.0 / bounds.height).clamp(0.0, 0.5);
+              final r = (28.0 / bounds.height).clamp(0.0, 0.5);
               return LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
@@ -261,9 +242,11 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
                     topOf: _topOf,
                     heightOf: _heightOf,
                     viewportH: _viewportH,
-                    viewportW: _viewportW,
+                    viewportW: constraints.maxWidth,
                     fontSize: _fontSize,
+                    rowHeight: _rowHeight,
                     leftPadding: _fontSize * _leftPaddingEm,
+                    rightPadding: _fontSize * 0.9,
                     inactiveScale: _inactiveScale,
                     maxLiftPx: _maxLiftPx,
                     overscan: _overscan,
@@ -279,7 +262,7 @@ class _AppleLyricsViewState extends State<AppleLyricsView>
   }
 }
 
-/// 解析解阻尼谐振子（临界/欠阻尼/过阻尼三态）
+/// 解析解阻尼谐振子（半隐式欧拉 + 固定子步长）
 class _Spring {
   double _x;
   double _v;
@@ -297,7 +280,6 @@ class _Spring {
 
   double get position => _x;
   double get velocity => _v;
-  double get target => _target;
 
   void setTarget(double t) => _target = t;
   void setPosition(double x, double v) {
@@ -307,7 +289,6 @@ class _Spring {
 
   void step(double dt) {
     if (dt <= 0) return;
-    // 半隐式欧拉，固定子步长保证稳定
     const sub = 0.008;
     var remain = dt;
     while (remain > 0) {
@@ -333,7 +314,8 @@ class _AppleLyricsPainter extends CustomPainter {
   final List<_Spring> scales;
   final double Function(int) topOf;
   final double Function(int) heightOf;
-  final double viewportH, viewportW, fontSize, leftPadding;
+  final double viewportH, viewportW, fontSize, rowHeight;
+  final double leftPadding, rightPadding;
   final double inactiveScale, maxLiftPx, overscan;
 
   _AppleLyricsPainter({
@@ -347,39 +329,34 @@ class _AppleLyricsPainter extends CustomPainter {
     required this.viewportH,
     required this.viewportW,
     required this.fontSize,
+    required this.rowHeight,
     required this.leftPadding,
+    required this.rightPadding,
     required this.inactiveScale,
     required this.maxLiftPx,
     required this.overscan,
   });
 
-  /// 关键：全白文字，只用 alpha 表达层次
-  /// dark  = factor*0.2 + 0.2  → 0.2 ~ 0.4
-  /// bright= factor*0.8 + 0.2  → 0.2 ~ 1.0
+  /// 按行距平滑衰减的 alpha。
   ///
-  /// 参考项目在开启模糊时清晰层 alpha 归零、只留预渲染的模糊位图（alpha 0.5）。
-  /// 这里没有预渲染位图，若沿用 0.2 会叠加成"看不清"，
-  /// 因此非当前行抬高到 0.42~0.5 区间，保证可读。
-  double _darkFor(double scale) {
-    final f = ((scale - inactiveScale) / (1.0 - inactiveScale)).clamp(0.0, 1.0);
-    return f * 0.1 + 0.42; // 0.42 ~ 0.52
-  }
-
-  double _brightFor(double scale) {
-    final f = ((scale - inactiveScale) / (1.0 - inactiveScale)).clamp(0.0, 1.0);
-    return f * 0.8 + 0.2; // 0.2 ~ 1.0
+  /// 关键：连续曲线而非分段常量，避免出现「当前行清晰、相邻行突然消失」的断层。
+  /// factor: 当前行 1.0 → 距离 1 约 0.55 → 距离 2 约 0.33 → 距离 3+ 收敛到 0.18
+  double _alphaFor(int dist, {required bool active}) {
+    if (active) return 1.0;
+    // 1 / (1 + 1.15 * d^1.25)
+    final f = 1.0 / (1.0 + 1.15 * math.pow(dist.toDouble(), 1.25));
+    return 0.16 + f * 0.42;
   }
 
   @override
   void paint(Canvas canvas, Size size) {
     if (lines.isEmpty) return;
-    final paint = Paint();
     final tp = TextPainter(textDirection: TextDirection.ltr);
+    final maxW = viewportW - leftPadding - rightPadding;
 
     for (int i = 0; i < lines.length; i++) {
       final lineH = heightOf(i);
       final y = topOf(i) + posY;
-      // 视口外剔除
       if (y + lineH < -overscan) continue;
       if (y > viewportH + overscan) break;
 
@@ -387,20 +364,8 @@ class _AppleLyricsPainter extends CustomPainter {
       final scale = i < scales.length ? scales[i].position : inactiveScale;
       final pivotY = y + lineH / 2;
 
-      // 非当前行：按行距分级模糊。
-      // σ 上限收到 3.2：参考项目上限 10 是配合「清晰层 alpha 归零 + 模糊位图
-      // alpha 0.5」的替换式方案；这里没有模糊位图，σ 过大只会糊成一片看不见。
-      if (!isActive) {
-        final dist = (i - currentIndex).abs();
-        final sigma = (0.6 + dist * 0.7).clamp(0.6, 3.2);
-        final rect = Rect.fromLTRB(0, y - sigma * 2, viewportW, y + lineH + sigma * 2);
-        canvas.saveLayer(
-          rect,
-          Paint()..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-        );
-      }
-
       canvas.save();
+      // 以左边缘为缩放中心（Apple Music 的锚点）
       canvas.translate(leftPadding, pivotY);
       canvas.scale(scale, scale);
       canvas.translate(-leftPadding, -pivotY);
@@ -408,69 +373,110 @@ class _AppleLyricsPainter extends CustomPainter {
       _paintLine(
         canvas: canvas,
         tp: tp,
-        paint: paint,
         line: lines[i],
         lineIndex: i,
         y: y,
+        maxW: maxW,
         isActive: isActive,
+        dist: (i - currentIndex).abs(),
         scale: scale,
       );
 
       canvas.restore();
-
-      if (!isActive) canvas.restore(); // saveLayer
     }
   }
 
   void _paintLine({
     required Canvas canvas,
     required TextPainter tp,
-    required Paint paint,
     required LyricLine line,
     required int lineIndex,
     required double y,
+    required double maxW,
     required bool isActive,
+    required int dist,
     required double scale,
   }) {
-    final dark = _darkFor(scale);
-    final bright = _brightFor(scale);
-    final maxW = viewportW - leftPadding - fontSize * 0.5;
-
-    // 翻译行只在当前行显示（0.7em / alpha 0.5）
+    final alpha = _alphaFor(dist, active: isActive);
     final hasTrans = line.translation != null && line.translation!.isNotEmpty;
-    final transSize = math.max(fontSize * 0.7, 12.0);
 
     if (isActive && line.hasWords) {
-      _paintWordByWord(canvas, line, y, maxW, dark, bright);
+      _paintWordByWord(canvas, tp, line, y, maxW);
     } else if (isActive) {
-      // 当前行 + 无逐字时间戳 → 用「行级进度」做扫光
-      // 行级 LRC 没有字级时间，但可以按本行已唱比例把亮区从左扫到右。
-      // 这与逐字模式视觉一致，只是扫过整行而非逐字。
-      final alpha = _lineSweepAlpha(line, lineIndex, bright, dark);
-      _paintLineText(canvas, tp, line, y, maxW, alpha.$1, alpha.$2);
+      // 当前行 + 无逐字时间戳 → 行级扫光
+      final a = _lineSweep(line, lineIndex);
+      _paintText(canvas, tp, line.text, y, maxW, a.$1, a.$2);
     } else {
-      final alpha = dark;
-      _paintLineText(canvas, tp, line, y, maxW, alpha, alpha);
+      _paintText(canvas, tp, line.text, y, maxW, alpha, alpha);
     }
 
-    if (hasTrans && isActive) {
+    // 翻译行：只在当前行显示，跟随该行透明度
+    if (hasTrans) {
+      final transAlpha = isActive ? 0.55 : alpha * 0.8;
+      final transSize = math.max(fontSize * 0.6, 12.0);
       tp.text = TextSpan(
         text: line.translation!,
         style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.5),
+          color: Colors.white.withValues(alpha: transAlpha),
           fontSize: transSize,
           fontWeight: FontWeight.w400,
-          height: 1.5,
+          height: 1.35,
         ),
       );
       tp.layout(maxWidth: maxW);
-      tp.paint(canvas, Offset(leftPadding, y + fontSize * 1.5));
+      tp.paint(canvas, Offset(leftPadding, y + fontSize * 1.32));
     }
   }
 
-  /// 计算当前行的演唱进度 0~1
+  /// 绘制一行文字，支持左右不同 alpha（扫光渐变）
+  void _paintText(
+    Canvas canvas,
+    TextPainter tp,
+    String text,
+    double y,
+    double maxW,
+    double alphaLeft,
+    double alphaRight,
+  ) {
+    final style = TextStyle(
+      fontSize: fontSize,
+      fontWeight: FontWeight.w600,
+      height: 1.32,
+    );
+
+    if ((alphaLeft - alphaRight).abs() < 0.012) {
+      tp.text = TextSpan(
+        text: text,
+        style: style.copyWith(
+          color: Colors.white.withValues(alpha: alphaLeft),
+        ),
+      );
+    } else {
+      // 需要渐变：先量宽度，再用 shader 作为前景
+      tp.text = TextSpan(text: text, style: style);
+      tp.layout(maxWidth: maxW);
+      final w = math.max(tp.width, 1.0);
+      tp.text = TextSpan(
+        text: text,
+        style: style.copyWith(
+          foreground: Paint()
+            ..shader = ui.Gradient.linear(
+              Offset(leftPadding, 0),
+              Offset(leftPadding + w, 0),
+              [
+                Colors.white.withValues(alpha: alphaLeft),
+                Colors.white.withValues(alpha: alphaRight),
+              ],
+            ),
+        ),
+      );
+    }
+    tp.layout(maxWidth: maxW);
+    tp.paint(canvas, Offset(leftPadding, y + (fontSize * 1.32 - fontSize) / 2));
+  }
+
+  /// 当前行的演唱进度 0~1
   double _lineProgress(LyricLine line, int lineIndex) {
-    // 行结束时间 = 下一行开始时间（末行按 4 秒估算）
     final end = (lineIndex + 1 < lines.length)
         ? lines[lineIndex + 1].time
         : line.time + const Duration(seconds: 4);
@@ -481,107 +487,55 @@ class _AppleLyricsPainter extends CustomPainter {
     return (elapsed.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
   }
 
-  /// 行级扫光：无逐字时间戳时，用本行进度把亮区从左扫到右。
-  ///
-  /// 返回值 (alphaLeft, alphaRight)：整行在播放头上取样两端，
-  /// 中间由 LinearGradient 插值，形成软边扫光。
-  (double, double) _lineSweepAlpha(LyricLine line, int lineIndex, double bright, double dark) {
+  /// 行级扫光（无逐字时间戳时）：亮区从左扫到右。
+  /// 返回整行左右端的 alpha，中间由渐变插值。
+  (double, double) _lineSweep(LyricLine line, int lineIndex) {
     final p = _lineProgress(line, lineIndex);
-    // 软带宽约为 3 个字符
-    final soft = 0.18;
-    final center = p;
+    const soft = 0.16; // 软带宽度（约 3 个字符）
     double a(double x) {
-      final d = (x - center) / soft;
-      // smoothstep 过渡
-      final t = ((d + 1) / 2).clamp(0.0, 1.0);
-      final e = t * t * (3 - 2 * t);
-      return dark + (bright - dark) * e;
+      final t = ((x - p) / soft + 1) / 2;
+      final e = t.clamp(0.0, 1.0);
+      final smooth = e * e * (3 - 2 * e); // smoothstep
+      // 未唱部分 0.45（仍可读），已唱部分 1.0
+      return 0.45 + smooth * 0.55;
     }
 
     return (a(0.0), a(1.0));
   }
 
-  /// 绘制整行文字，支持左右不同 alpha（扫光渐变）
-  void _paintLineText(
+  /// 逐字歌词：连续 alpha 播放头 + 软过渡带
+  ///
+  /// maskX = 已完成字累计宽度 + 当前字内进度 × 当前字宽
+  /// 过渡带半宽固定为**行内平均字宽**（用当前字宽会在字切换瞬间闪烁）
+  void _paintWordByWord(
     Canvas canvas,
     TextPainter tp,
     LyricLine line,
     double y,
     double maxW,
-    double alphaLeft,
-    double alphaRight,
-  ) {
-    final style = TextStyle(
-      fontSize: fontSize,
-      fontWeight: FontWeight.w600,
-      height: 1.35,
-    );
-    // 左右 alpha 不同 → 用渐变前景，否则纯色
-    if ((alphaLeft - alphaRight).abs() < 0.01) {
-      tp.text = TextSpan(
-        text: line.text,
-        style: style.copyWith(
-          color: Colors.white.withValues(alpha: alphaLeft),
-        ),
-      );
-    } else {
-      tp.text = TextSpan(text: line.text, style: style);
-      tp.layout(maxWidth: maxW);
-      final w = tp.width;
-      final shader = ui.Gradient.linear(
-        Offset(leftPadding, 0),
-        Offset(leftPadding + w, 0),
-        [
-          Colors.white.withValues(alpha: alphaLeft),
-          Colors.white.withValues(alpha: alphaRight),
-        ],
-      );
-      tp.text = TextSpan(
-        text: line.text,
-        style: style.copyWith(foreground: Paint()..shader = shader),
-      );
-    }
-    tp.layout(maxWidth: maxW);
-    tp.paint(canvas, Offset(leftPadding, y + (fontSize * 1.35 - fontSize) / 2));
-  }
-
-  /// 逐字歌词：连续 alpha 播放头 + 软过渡带
-  ///
-  /// maskX = 已完成字累计宽度 + 当前字内进度 × 当前字宽
-  /// 过渡带半宽固定为**行内平均字宽**（若用当前字宽会在字切换时闪烁）
-  void _paintWordByWord(
-    Canvas canvas,
-    LyricLine line,
-    double y,
-    double maxW,
-    double dark,
-    double bright,
   ) {
     final words = line.words!;
     if (words.isEmpty) return;
 
     // 量出每个字的宽度与起始 X
-    final tp = TextPainter(textDirection: TextDirection.ltr);
     final widths = <double>[];
     final starts = <double>[];
     var x = 0.0;
+    const baseStyle = TextStyle(
+      color: Colors.white,
+      fontSize: 27.0,
+      fontWeight: FontWeight.w600,
+      height: 1.32,
+    );
     for (final w in words) {
-      tp.text = TextSpan(
-        text: w.text,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: fontSize,
-          fontWeight: FontWeight.w600,
-          height: 1.35,
-        ),
-      );
+      tp.text = TextSpan(text: w.text, style: baseStyle);
       tp.layout();
       starts.add(x);
       widths.add(tp.width);
       x += tp.width;
     }
 
-    // 播放头位置
+    // 定位当前词与词内进度
     double maskX;
     var curIdx = -1;
     var intra = 0.0;
@@ -606,19 +560,23 @@ class _AppleLyricsPainter extends CustomPainter {
         break;
       }
     }
+
     if (curIdx >= words.length) {
-      maskX = double.infinity; // 全部唱完
+      maskX = double.infinity;
     } else if (curIdx < 0) {
-      maskX = -1.0; // 未开始
+      maskX = -1.0;
     } else {
       maskX = starts[curIdx] + widths[curIdx] * intra;
     }
 
     // 过渡带半宽 = 行内平均字宽
-    final meanW = widths.isEmpty ? 0.0 : widths.reduce((a, b) => a + b) / widths.length;
+    final meanW =
+        widths.isEmpty ? 0.0 : widths.reduce((a, b) => a + b) / widths.length;
     final halfBand = meanW;
 
-    // 每个字按播放头采样左右端 alpha，用渐变填充 → 平滑扫过
+    const bright = 1.0;
+    const dark = 0.45; // 未唱字仍保持可读
+
     for (int i = 0; i < words.length; i++) {
       final w = words[i];
       final sx = starts[i];
@@ -641,35 +599,38 @@ class _AppleLyricsPainter extends CustomPainter {
       if (i < curIdx) {
         liftY = maxLiftPx;
       } else if (i == curIdx) {
-        final e = intra * intra * (3 - 2 * intra); // smoothstep
+        final e = intra * intra * (3 - 2 * intra);
         liftY = maxLiftPx * e;
       }
 
-      final rect = Rect.fromLTWH(sx, y + liftY, sw, fontSize * 1.35);
-      // 用渐变做前景色，实现字内平滑过渡
-      final shader = ui.Gradient.linear(
-        Offset(rect.left, 0),
-        Offset(rect.right, 0),
-        [
-          Colors.white.withValues(alpha: aL),
-          Colors.white.withValues(alpha: aR),
-        ],
-      );
-      tp.text = TextSpan(
-        text: w.text,
-        style: TextStyle(
-          foreground: Paint()..shader = shader,
-          fontSize: fontSize,
-          fontWeight: FontWeight.w600,
-          height: 1.35,
-        ),
-      );
+      // 字内渐变 → 平滑扫过
+      TextStyle style;
+      if ((aL - aR).abs() < 0.012) {
+        style = baseStyle.copyWith(
+          color: Colors.white.withValues(alpha: aL),
+        );
+      } else {
+        style = baseStyle.copyWith(
+          foreground: Paint()
+            ..shader = ui.Gradient.linear(
+              Offset(leftPadding + sx, 0),
+              Offset(leftPadding + sx + math.max(sw, 1.0), 0),
+              [
+                Colors.white.withValues(alpha: aL),
+                Colors.white.withValues(alpha: aR),
+              ],
+            ),
+        );
+      }
+
+      tp.text = TextSpan(text: w.text, style: style);
       tp.layout();
-      tp.paint(canvas, Offset(leftPadding + sx, y + liftY + (fontSize * 1.35 - fontSize) / 2));
+      tp.paint(canvas,
+          Offset(leftPadding + sx, y + liftY + (fontSize * 1.32 - fontSize) / 2));
     }
   }
 
-  /// X 坐标处的 alpha（播放头软带核心）
+  /// X 坐标处的 alpha（软带）
   static double _alphaAtX(
     double x,
     double bandStart,
