@@ -1,4 +1,4 @@
-﻿import 'dart:math' as math;
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -239,8 +239,34 @@ final enter = _cl(t / inDur);
 // 出场变换只算一次：镜头追踪时只用它的 alpha 做淡出
     final xo = _exitTransform(config.exit, exit, seed);
 
-// ---- 入场变换（镜头追踪时跳过，运动已由纵深承担）----
-    if (!fly) {
+    // ---- 转场：接管入场/出场的位移与淡出 ----
+    // exit 与 enter 解算的是**同一条 flowAngle 向量**，
+    // 所以交接前后屏幕上的运动方向不变（见 _transitionFrame 注释）。
+    final trans = config.transition;
+    final useTransition = trans != LyricTransition.none && !fly;
+    var trBlur = 0.0;
+    var trAlpha = 1.0;
+
+    if (useTransition) {
+      // 关键：进场属于「line[index-1] → line[index]」这条边界，
+      // 出场属于「line[index] → line[index+1]」那条边界。
+      // 向量必须按**边界**取，两侧才接得上；
+      // 若两边都取 _flowAngle(index)，出场会和下一句的进场
+      // 指向不同方向，恰好破坏「运动方向始终不变」这个前提。
+      final fEnter =
+          _transitionFrame(trans, 'enter', enter, _flowAngle(index), size);
+      final fExit =
+          _transitionFrame(trans, 'exit', exit, _flowAngle(index + 1), size);
+
+      // 两段位移相加：出场继续沿向量推进，进场从上游抵达
+      final dx = fExit.dx + fEnter.dx;
+      final dy = fExit.dy + fEnter.dy;
+      canvas.translate(dx, dy);
+      canvas.scale(fExit.scale * fEnter.scale, fExit.scale * fEnter.scale);
+
+      trAlpha = fExit.alpha * fEnter.alpha;
+      trBlur = math.max(fEnter.blur, fExit.blur);
+    } else if (!fly) {
       final xf = _entranceTransform(config.entrance, enter, seed, layout.size);
       canvas.translate(xf.dx, xf.dy);
       if (xf.rot != 0) canvas.rotate(xf.rot);
@@ -252,10 +278,29 @@ final enter = _cl(t / inDur);
       if (xo.rot != 0) canvas.rotate(xo.rot);
     }
 
-    final globalAlpha = ((fly ? 1.0 : xo.alpha) * flyFade).clamp(0.0, 1.0);
+    final globalAlpha =
+        ((useTransition ? trAlpha : (fly ? 1.0 : xo.alpha)) * flyFade)
+            .clamp(0.0, 1.0);
     if (globalAlpha <= 0.003) {
       canvas.restore();
       return;
+    }
+
+    // ---- 转场模糊：用 saveLayer 整体虚化 ----
+    // 只在确实需要时才开：全屏 blur 每帧一次 saveLayer，
+    // 在车机/低端机上开销明显，所以 sigma 有下限门槛并封顶。
+    var blurLayer = false;
+    if (trBlur > 0.4) {
+      canvas.saveLayer(
+        Offset.zero & size,
+        Paint()
+          ..imageFilter = ui.ImageFilter.blur(
+            sigmaX: trBlur,
+            sigmaY: trBlur,
+            tileMode: TileMode.decal,
+          ),
+      );
+      blurLayer = true;
     }
 
 // ---- 满屏铺贴：整句缩小后平铺成背景墙（画在主句之下）----
@@ -305,15 +350,17 @@ final enter = _cl(t / inDur);
       _pass(canvas, layout, baseInk, Offset.zero, weightK, amt, t, true);
     }
 
+// 先关闭转场模糊层（若开启），再关闭主 save
+    if (blurLayer) canvas.restore();
     canvas.restore();
 
     // ---- 翻译行 ----
-    final tr = line.translation;
-    if (tr != null && tr.isNotEmpty && exit < 0.4) {
+    final trans2 = line.translation;
+    if (trans2 != null && trans2.isNotEmpty && exit < 0.4) {
       final trAlpha = (1 - exit) * (0.4 + amt * 0.3);
       final tp = TextPainter(textDirection: TextDirection.ltr);
       tp.text = TextSpan(
-        text: tr,
+        text: trans2,
         style: TextStyle(
           color: pal.sub.withValues(alpha: trAlpha),
           fontSize: (layout.size * 0.16).clamp(11.0, 20.0),
@@ -461,6 +508,105 @@ final enter = _cl(t / inDur);
       Offset(right, 0),
       cleanColors,
       cleanStops,
+    );
+  }
+
+  // ---------------- 句间转场 ----------------
+  //
+  // 移植自 folia-major：
+  //   temperaTransitions.ts  (block-wipe / camera-pan / shape-carry)
+  //   lumiereTransitions.ts   (lights-out / flare-cut / focus-pull)
+  //
+  // 核心约定：**出场与进场走同一条 flowAngle 向量**。
+  // 参考注释写得很清楚：
+  //   "exit moves the outgoing composition further along the flow;
+  //    enter starts the incoming one upstream and lets it arrive on
+  //    the same vector, so across the swap the on-screen motion
+  //    never changes direction."
+  // 也就是说交接在屏幕上读起来是一段连续的移动，
+  // 而不是「退回去再推进去」——后者正是转场显得生硬的原因。
+  static double _smooth01(double v) {
+    final t = v.clamp(0.0, 1.0);
+    return t * t * (3 - 2 * t);
+  }
+
+  /// 每句一个稳定的流向量（由行号散列），保证同一条句子
+  /// 每次播放的转场方向一致，不会随机乱跳。
+  static double _flowAngle(int lineIndex) =>
+      _hash(lineIndex * 57 + 5) * math.pi * 2;
+
+  /// 解算转场在某一侧的画面帧。
+  ///
+  /// [phase] = exit 表示旧句走向边界，enter 表示新句离开边界。
+  /// [progress] 为 0→1。返回的 dx/dy 已按画布尺寸归一化。
+  static ({double dx, double dy, double scale, double alpha, double blur})
+      _transitionFrame(LyricTransition kind, String phase, double progress,
+          double flowAngle, Size size) {
+    final linear = progress.clamp(0.0, 1.0);
+    final eased = _inOutExpo(linear);
+    // 越靠近边界 near 越大
+    final near = phase == 'exit' ? _smooth01(linear) : 1 - _smooth01(linear);
+    final flowX = math.cos(flowAngle);
+    final flowY = math.sin(flowAngle);
+    // 位移用画布对角线做单位，任意屏幕尺寸下观感一致
+    final unit = math.sqrt(size.width * size.width + size.height * size.height);
+
+    double travelFactor = 0.0; // 沿向量走了多远（0~1）
+    var scale = 1.0;
+    var alpha = 1.0;
+    var blur = 0.0;
+
+    switch (kind) {
+      case LyricTransition.lightsOut:
+        alpha = 1 - near;
+        break;
+      case LyricTransition.flareCut:
+        // 模糊/放大的峰值落在边界上
+        scale = 1 + 0.03 * near;
+        blur = 7 * near * near;
+        alpha = 1 - 0.35 * near * near;
+        break;
+      case LyricTransition.focusPull:
+        scale = 1 + 0.015 * near;
+        blur = 12 * near;
+        break;
+      case LyricTransition.cameraPan:
+        // exit 继续往前推，enter 从上游 arrive 到同一向量上
+        travelFactor = phase == 'exit' ? eased * 0.5 : -(1 - eased) * 0.5;
+        // alpha 一直保持到几乎移出画面，避免中途出现空屏
+        alpha = phase == 'exit'
+            ? 1 - _cl((linear - 0.72) / 0.28)
+            : _cl(linear / 0.3);
+        scale = 1 + (phase == 'exit' ? eased : 1 - eased) * 0.03;
+        break;
+      case LyricTransition.shapeCarry:
+        // 边漂移边放大虚化，像被下一个画面抽出焦点
+        travelFactor = (phase == 'exit' ? eased : eased - 1) * 0.18;
+        final away = phase == 'exit' ? eased : 1 - eased;
+        scale = 1 + away * 0.07;
+        alpha = phase == 'exit'
+            ? 1 - _cl((linear - 0.55) / 0.45)
+            : _cl(linear / 0.45);
+        blur = away * 6;
+        break;
+      case LyricTransition.blockWipe:
+        // 参考用一块全屏色块盖住交接点；这里没有 overlay 色块，
+        // 退化为整句横穿画面（同向量、行程拉满）
+        travelFactor = phase == 'exit' ? eased : -(1 - eased);
+        alpha = phase == 'exit'
+            ? 1 - _cl((linear - 0.80) / 0.20)
+            : _cl(linear / 0.25);
+        break;
+      case LyricTransition.none:
+        break;
+    }
+
+    return (
+      dx: flowX * travelFactor * unit,
+      dy: flowY * travelFactor * unit,
+      scale: scale,
+      alpha: alpha.clamp(0.0, 1.0),
+      blur: blur.clamp(0.0, 14.0),
     );
   }
 

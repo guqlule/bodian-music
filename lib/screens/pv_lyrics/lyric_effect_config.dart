@@ -103,6 +103,25 @@ enum LyricPalette {
   final Color bg, fg, sub, accent, accent2;
 }
 
+/// 句与句之间的转场。
+///
+/// 关键设计（参考 folia-major 的 temperaTransitions / lumiereTransitions）：
+/// **出场与进场走同一条向量**，所以交接在屏幕上的运动方向始终不变，
+/// 读起来是一段连续的移动，而不是「退回去再推进去」。
+enum LyricTransition {
+  none('沿用入场/出场', '不使用转场'),
+  lightsOut('熄灯', '透明度收光后换句'),
+  flareCut('闪白', '轻微放大 + 模糊峰值落在边界'),
+  focusPull('拉焦', '模糊出场、清晰进场'),
+  cameraPan('推移', '整句沿同一向量平移交接'),
+  shapeCarry('溶入', '漂移中放大并虚化，像被抽出焦点'),
+  blockWipe('擦除', '整句横穿画面完成交接');
+
+  const LyricTransition(this.label, this.desc);
+  final String label;
+  final String desc;
+}
+
 /// 特效配置
 class LyricEffectConfig {
   final LyricLayout layout;
@@ -124,6 +143,9 @@ class LyricEffectConfig {
   /// 上一句上浮消失、下一句从深处浮现。
   final bool fly;
 
+  /// 句与句之间的转场。选中后会接管入场/出场的位移。
+  final LyricTransition transition;
+
   const LyricEffectConfig({
     this.layout = LyricLayout.huge,
     this.entrance = LyricEntrance.pop,
@@ -135,6 +157,7 @@ class LyricEffectConfig {
     this.sweep = true,
     this.random = false,
     this.fly = false,
+    this.transition = LyricTransition.none,
   });
 
   LyricEffectConfig copyWith({
@@ -148,6 +171,7 @@ class LyricEffectConfig {
     bool? sweep,
     bool? random,
     bool? fly,
+    LyricTransition? transition,
   }) {
     return LyricEffectConfig(
       layout: layout ?? this.layout,
@@ -174,6 +198,7 @@ class LyricEffectConfig {
         'sweep': sweep,
         'random': random,
         'fly': fly,
+        'transition': transition.name,
       };
 
   factory LyricEffectConfig.fromJson(Map<String, dynamic> json) {
@@ -196,6 +221,7 @@ class LyricEffectConfig {
       sweep: json['sweep'] as bool? ?? true,
       random: json['random'] as bool? ?? false,
       fly: json['fly'] as bool? ?? false,
+      transition: pick(LyricTransition.values, json['transition'] as String?, LyricTransition.none),
     );
   }
 
@@ -215,6 +241,9 @@ class LyricEffectConfig {
     final exits = LyricExit.values;
     final treats = LyricTreat.values;
     final palettes = LyricPalette.values;
+    // 转场不参与随机：它描述的是「上一句→这一句」的交接，
+    // 而随机是按当前句种子算的，同一句的转场必须稳定。
+    final transitions = LyricTransition.values;
 
     return LyricEffectConfig(
       layout: layouts[(h(1) * layouts.length).floor().clamp(0, layouts.length - 1)],
@@ -228,6 +257,7 @@ class LyricEffectConfig {
       sweep: h(8) > 0.25,
       random: true,
       fly: h(9) > 0.5,
+      transition: transitions[(h(10) * transitions.length).floor().clamp(0, transitions.length - 1)],
     );
   }
 
@@ -349,6 +379,15 @@ Future<void> showLyricEffectSheet(BuildContext context) async {
                         descOf: (e) => e.desc,
                         isSelected: (e) => e == cfg.entrance,
                         onSelect: (v) => apply(cfg.copyWith(entrance: v)),
+                      ),
+                      _Section<LyricTransition>(
+                        title: '转场',
+                        values: LyricTransition.values,
+                        cfg: cfg,
+                        labelOf: (e) => e.label,
+                        descOf: (e) => e.desc,
+                        isSelected: (e) => e == cfg.transition,
+                        onSelect: (v) => apply(cfg.copyWith(transition: v)),
                       ),
                       _Section<LyricExit>(
                         title: '出场',
