@@ -1117,6 +1117,10 @@ class PlayerService {
           logDebug('[Lyric] 内置API歌词成功');
           if (_isStaleLyric(lrId)) return;
           _lyricController.add(lyricData);
+          // 只有行级歌词时，后台异步升级为逐字（不阻塞显示）
+          if (!LyricApiService.isWordLevel(lyricData['lyric'])) {
+            unawaited(_upgradeToWordLyric(music, lrId));
+          }
           return;
         }
       } catch (e) {
@@ -1132,6 +1136,9 @@ class PlayerService {
             logDebug('[Lyric] 用户源歌词成功');
             if (_isStaleLyric(lrId)) return;
             _lyricController.add(lyricData);
+            if (!LyricApiService.isWordLevel(lyricData['lyric'])) {
+              unawaited(_upgradeToWordLyric(music, lrId));
+            }
             return;
           }
         } catch (e) {
@@ -1144,6 +1151,23 @@ class PlayerService {
     } catch (e) {
       logDebug('[Lyric] 获取歌词失败: $e');
       if (!_isStaleLyric(lrId)) _lyricController.add(null);
+    }
+  }
+
+  /// 后台把行级歌词升级为逐字（酷狗 KRC）。
+  ///
+  /// 先让行级歌词立即显示，再异步补逐字，避免用户等 1~3 秒。
+  /// 拿到后重新 emit，UI 会自动切到逐字（扫字/逐字高亮生效）。
+  /// 切歌后 lrId 过期则丢弃，防止串词。
+  Future<void> _upgradeToWordLyric(MusicInfo music, int lrId) async {
+    try {
+      final kg = await _lyricApiService.upgradeToWordLyric(music);
+      if (kg == null || (kg['lyric'] ?? '').isEmpty) return;
+      if (_isStaleLyric(lrId)) return;
+      logDebug('[Lyric] 已升级为逐字歌词: ${music.name}');
+      _lyricController.add(kg);
+    } catch (e) {
+      logDebug('[Lyric] 升级逐字失败: $e');
     }
   }
 

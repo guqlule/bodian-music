@@ -568,8 +568,9 @@ class _JizuraPainter extends CustomPainter {
     canvas.save();
     canvas.translate(offset.dx, offset.dy);
 
-    // 打字机：按进度逐字显现
-    final typeCut = treat == LyricTreat.none && config.entrance == LyricEntrance.type;
+// 打字机：按进度逐字显现。
+    // 不再要求 treat == none —— 否则选了默认的辉光时打字机整个失效。
+    final typeCut = config.entrance == LyricEntrance.type;
     final shown = typeCut
         ? (layout.glyphs.length * _cl((t - 0.05) / 0.5)).floor()
         : layout.glyphs.length;

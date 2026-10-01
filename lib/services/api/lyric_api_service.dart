@@ -28,7 +28,28 @@ class LyricApiService {
   factory LyricApiService() => _instance;
   LyricApiService._internal();
 
-  /// 获取歌词 - 根据来源选择对应API，失败后跨源兜底
+  /// 判断歌词文本是否含逐字（字级）时间戳。
+  ///
+  /// 支持两种标记：
+  ///   ELRC/网易云：`<mm:ss.xxx>`
+  ///   KRC/QQ QRC：`<offset,dur>`（offset 可为负）
+  /// 只有行级 `[mm:ss]` 的歌词返回 false。
+  static final RegExp _wordTagProbe =
+      RegExp(r'<\d{1,3}:\d{2}\.?\d{0,3}>|<-?\d+,-?\d+');
+
+  static bool _hasWordTiming(String? lyric) {
+    if (lyric == null || lyric.isEmpty) return false;
+    return _wordTagProbe.hasMatch(lyric);
+  }
+
+  /// 公开版：判断歌词是否含逐字时间戳
+  static bool isWordLevel(String? lyric) => _hasWordTiming(lyric);
+
+  /// 获取歌词 - 根据来源选择对应API，完全没有歌词时才跨源兜底
+  ///
+  /// 注意：这里**不会**为了升级逐字而额外发请求——
+  /// 那是 [upgradeToWordLyric] 的职责，由播放器在后台异步调用，
+  /// 避免为了等酷狗 KRC 而让本来秒出的行级歌词卡住 1~3 秒。
   Future<Map<String, String?>?> getLyric(MusicInfo music) async {
     logDebug('[LyricApi] 获取歌词: source=${music.source}, id=${music.songId}');
     
@@ -55,7 +76,7 @@ class LyricApiService {
       return result;
     }
 
-    // 跨源兜底 1：本源歌词为空时，用网易云歌词接口按歌名+歌手搜索
+    // 完全没有歌词 → 网易云关键词兜底
     logDebug('[LyricApi] 本源歌词为空，尝试网易云跨源兜底');
     try {
       final fallback = await _searchWyLyricByKeyword(music);
@@ -67,13 +88,11 @@ class LyricApiService {
       logDebug('[LyricApi] 网易云跨源兜底失败: $e');
     }
 
-    // 跨源兜底 2：酷狗 KRC（唯一稳定提供逐字歌词的公开接口）。
-    // 网易云/QQ 接口只返回行级歌词，所以任何源都能从这里拿到逐字版本。
-    logDebug('[LyricApi] 尝试酷狗 KRC 跨源逐字兜底');
+    // 仍无 → 酷狗 KRC 兜底
     try {
       final kg = await _searchKgLyricByKeyword(music);
       if (kg != null && kg['lyric'] != null && kg['lyric']!.isNotEmpty) {
-        logDebug('[LyricApi] 酷狗 KRC 跨源兜底成功（逐字）');
+        logDebug('[LyricApi] 酷狗 KRC 跨源兜底成功');
         return kg;
       }
     } catch (e) {
@@ -81,6 +100,25 @@ class LyricApiService {
     }
 
     return result;
+  }
+
+  /// 把行级歌词升级为逐字（酷狗 KRC）。
+  ///
+  /// 网易云/QQ/酷我只提供行级歌词，酷狗 KRC 是目前唯一稳定的公开逐字源。
+  /// 仅在**确实拿到真逐字**时返回结果，否则返回 null，
+  /// 这样调用方可以放心用它覆盖已有歌词。
+  Future<Map<String, String?>?> upgradeToWordLyric(MusicInfo music) async {
+    if (music.source == 'kg') return null; // 酷狗本源已经是 KRC
+    try {
+      final kg = await _searchKgLyricByKeyword(music);
+      if (kg != null && _hasWordTiming(kg['lyric'])) {
+        logDebug('[LyricApi] 酷狗 KRC 升级逐字成功: ${music.name}');
+        return kg;
+      }
+    } catch (e) {
+      logDebug('[LyricApi] 酷狗 KRC 升级逐字失败: $e');
+    }
+    return null;
   }
 
   /// 按歌名+歌手搜索歌词（用于本地歌曲无 .lrc 时在线兜底）
