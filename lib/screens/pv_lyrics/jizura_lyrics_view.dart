@@ -187,8 +187,16 @@ class _JizuraPainter extends CustomPainter {
 
     final layout = _layout(line.text, size);
 
-    canvas.save();
+canvas.save();
     canvas.translate(size.width / 2, size.height / 2);
+
+    // ---- 跑马灯：横向滑入滑出 ----
+    // 进：从右侧滑到中央（enter 0→1 对应 +W→0）
+    // 出：继续向左滑出（exit 0→1 对应 0→-W）
+    if (config.layout == LyricLayout.marquee) {
+      final slide = (1 - enter) * size.width * 1.15 - exit * size.width * 1.15;
+      canvas.translate(slide, 0);
+    }
 
     // ---- 入场变换 ----
     final xf = _entranceTransform(config.entrance, enter, seed, layout.size);
@@ -206,6 +214,16 @@ class _JizuraPainter extends CustomPainter {
     if (globalAlpha <= 0.003) {
       canvas.restore();
       return;
+    }
+
+// ---- 满屏铺贴：整句缩小后平铺成背景墙（画在主句之下）----
+    if (config.layout == LyricLayout.tile) {
+      _drawTiledWall(canvas, size, layout);
+    }
+
+    // ---- 残像堆叠：主句下方的递减残影（画在主句之下）----
+    if (config.layout == LyricLayout.stack) {
+      _drawStackGhosts(canvas, layout, pal, globalAlpha, weightK, amt, t);
     }
 
 // ---- 色差错位（ghost）----
@@ -249,7 +267,88 @@ class _JizuraPainter extends CustomPainter {
     }
   }
 
-// ---------------- 时长 ----------------
+// ---------------- 满屏铺贴：背景墙 ----------------
+  ///
+  /// 把当前句整体缩到 ~24% 后在屏幕上平铺，形成半透明文字墙。
+  /// 在中心坐标系里工作：先平移到中心再 scale(k)，
+  /// 此时可见范围放大为 size/k，所以需要铺 (size/(k*totalW)) 份。
+  ///
+  /// 绘制量有硬上限（[_tileMaxGlyphs]）：这是车机/低端机场景，
+  /// CustomPaint 每帧重绘，逐字 TextPainter.layout 开销必须封顶。
+  static const int _tileMaxGlyphs = 48;
+
+  void _drawTiledWall(Canvas canvas, Size size, _Layout layout) {
+    if (layout.glyphs.isEmpty) return;
+    final pal = config.palette;
+    final totalW = layout.glyphs.last.x + layout.glyphs.last.w;
+    final rowH = layout.size * 1.12;
+    if (totalW <= 1 || rowH <= 1) return;
+
+    const k = 0.24;
+    final visW = size.width / k;
+    final visH = size.height / k;
+    final cols = (visW / totalW).ceil() + 1;
+    final rowCount = (visH / rowH).ceil() + 1;
+    if (cols <= 0 || rowCount <= 0) return;
+
+    final tp = TextPainter(textDirection: TextDirection.ltr);
+    final st = TextStyle(
+      fontSize: layout.size,
+      fontWeight: FontWeight.w900,
+      height: 1.0,
+      letterSpacing: -0.02 * layout.size,
+      color: pal.fg.withValues(alpha: 0.055),
+    );
+
+    var drawn = 0;
+    canvas.save();
+    // 注意：调用处已把画布平移到屏幕中心，这里不能再平移一次，
+    // 否则整面墙会偏移 (W/2, H/2)。
+    canvas.scale(k, k);
+    for (int r = -rowCount; r <= rowCount; r++) {
+      // 奇数行错开半格，避免出现明显的竖向对齐纹
+      final rowShift = r.isOdd ? totalW * 0.5 : 0.0;
+      for (int c = -cols; c <= cols; c++) {
+        canvas.save();
+        canvas.translate(c * totalW + rowShift, r * rowH);
+        for (final g in layout.glyphs) {
+          if (drawn >= _tileMaxGlyphs) {
+            canvas.restore();
+            canvas.restore();
+            return;
+          }
+          drawn++;
+          tp.text = TextSpan(text: g.ch, style: st);
+          tp.layout();
+          tp.paint(canvas, Offset(g.x, g.y));
+        }
+        canvas.restore();
+      }
+    }
+    canvas.restore();
+  }
+
+  // ---------------- 残像堆叠 ----------------
+  ///
+  /// 主句下方叠 N 层残影：每层向下偏移、缩小、透明度递减，
+  /// 形成向下的纵深衰减。
+  void _drawStackGhosts(Canvas canvas, _Layout layout, LyricPalette pal,
+      double globalAlpha, double weightK, double amt, double t) {
+    final step = layout.size * 0.30;
+    for (int k = 1; k <= 3; k++) {
+      final fade = (1 - k * 0.26) * globalAlpha;
+      if (fade <= 0.01) break;
+      canvas.save();
+      canvas.translate(0, step * k);
+      final s = 1 - k * 0.085;
+      canvas.scale(s, s);
+      _pass(canvas, layout, pal.fg.withValues(alpha: fade), Offset.zero,
+          weightK, amt, t, false);
+      canvas.restore();
+    }
+  }
+
+  // ---------------- 时长 ----------------
   double _lineDuration(int i) {
     final end = (i + 1 < lines.length)
         ? lines[i + 1].time
@@ -448,9 +547,10 @@ class _JizuraPainter extends CustomPainter {
       return _layoutVertical(clean, size);
     }
 
-    final W = size.width;
+final W = size.width;
     final H = size.height;
     final n = clean.characters.length;
+    final isMarquee = config.layout == LyricLayout.marquee;
 
     // 基准字号
     double baseFs;
@@ -462,9 +562,16 @@ class _JizuraPainter extends CustomPainter {
         baseFs = math.min(H * 0.33, W * 0.84 / (n * 0.7));
         break;
       case LyricLayout.stack:
-      case LyricLayout.marquee:
+        // 主句下方要叠残影，故留出下方空间
+        baseFs = math.min(H * 0.34, W * 0.80 / (n * 0.72));
+        break;
       case LyricLayout.tile:
-        baseFs = math.min(H * 0.30, W * 0.80 / (n * 0.72));
+        // 背景墙用小字平铺，主句反而要大，形成对比
+        baseFs = math.min(H * 0.42, W * 0.86 / (n * 0.76));
+        break;
+      case LyricLayout.marquee:
+        // 跑马灯：单行不折行，允许比屏幕宽（横向滑入滑出）
+        baseFs = math.min(H * 0.17, W * 2.2 / n);
         break;
       default:
         baseFs = math.min(H * 0.5, W * 0.9 / n);
@@ -479,18 +586,20 @@ class _JizuraPainter extends CustomPainter {
           letterSpacing: -0.02 * fs,
         );
 
-    // 决定是否折行
+// 决定是否折行（跑马灯保持单行）
     var segs = <String>[clean];
-    tp.text = TextSpan(text: clean, style: mk(baseFs));
-    tp.layout();
-    if (tp.width > W * 0.88) {
-      final k = (W * 0.88) / math.max(tp.width, 1.0);
-      if (k > 0.34) {
-        baseFs *= k;
-      } else if (clean.length > 8) {
-        baseFs = math.min(baseFs * k, W / 4.2);
-        final mid = (clean.length / 2).ceil();
-        segs = [clean.substring(0, mid), clean.substring(mid)];
+    if (!isMarquee) {
+      tp.text = TextSpan(text: clean, style: mk(baseFs));
+      tp.layout();
+      if (tp.width > W * 0.88) {
+        final k = (W * 0.88) / math.max(tp.width, 1.0);
+        if (k > 0.34) {
+          baseFs *= k;
+        } else if (clean.length > 8) {
+          baseFs = math.min(baseFs * k, W / 4.2);
+          final mid = (clean.length / 2).ceil();
+          segs = [clean.substring(0, mid), clean.substring(mid)];
+        }
       }
     }
 
