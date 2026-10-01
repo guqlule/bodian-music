@@ -118,12 +118,19 @@ class _JizuraPainter extends CustomPainter {
   final Duration position;
   final LyricEffectConfig config;
 
-  _JizuraPainter({
+_JizuraPainter({
     required this.lines,
     required this.index,
     required this.position,
     required this.config,
   });
+
+  /// 当前正在绘制的那一句（_paintLine 入口写入）。
+  /// 扫字与高亮需要知道「现在画的是哪句」，因为交接时会被调用多次。
+  int _curLine = -1;
+
+  /// 当前正在绘制的那一句的虚拟播放位置。
+  Duration _curAt = Duration.zero;
 
   // ---------------- JIZURA 缓动 ----------------
   static double _cl(double x) => x.clamp(0.0, 1.0);
@@ -152,30 +159,21 @@ class _JizuraPainter extends CustomPainter {
   }
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final pal = config.palette;
+void paint(Canvas canvas, Size size) {
     if (lines.isEmpty || index < 0 || index >= lines.length) {
       _drawIdle(canvas, size);
       return;
     }
-    final line = lines[index];
-    if (line.text.trim().isEmpty || line.text == '\u00A0') {
-      _drawIdle(canvas, size);
-      return;
-    }
 
-// 时间轴
     final dur = _lineDuration(index);
-    final lineStart = line.time;
-    final t = ((position - lineStart).inMilliseconds / 1000.0).clamp(0.0, dur);
+    final t = ((position - lines[index].time).inMilliseconds / 1000.0)
+        .clamp(0.0, dur);
 
     // 转场是否启用要先于时长计算——它决定用哪套时长（规矩 5）
-    final trans = config.transition;
-    final fly = config.fly;
-    final useTransition = trans != LyricTransition.none && !fly;
+    final useTransition =
+        config.transition != LyricTransition.none && !config.fly;
 
     // 规矩 5：转场时长由行时长决定，并带下限。
-    // 上限压得比原来低（0.45/0.40），否则短句会被转场整个吃掉。
     final inDur = useTransition
         ? (dur * 0.30).clamp(0.15, 0.45)
         : (dur * 0.36).clamp(0.12, 0.6);
@@ -184,28 +182,74 @@ class _JizuraPainter extends CustomPainter {
         : (config.exit == LyricExit.none
             ? 0.0
             : (dur * 0.3).clamp(0.14, 0.55));
-    final outStart = dur - outDur;
 
     final enter = _cl(t / inDur);
-    final exitRaw = outDur > 0.002 ? _cl((t - outStart) / outDur) : 0.0;
+    final exit = outDur > 0.002 ? _cl((t - (dur - outDur)) / outDur) : 0.0;
+
+    // ---- 交接窗口：邻句一并在场 ----
+    //
+    // 只画一句时，旧句淡出与新句淡入之间必然空屏，alphaFloor 只能缓解。
+    // 两句同时在场才是真正的叠化交接：旧句冻在出场末态，新句冻在进场初态，
+    // 中间由当前句的进度把它们接起来。
+    if (enter < 1 && index - 1 >= 0) {
+      _paintLine(canvas, size, index - 1,
+          enter: 1, exitIn: 1, at: position);
+    }
+    if (exit > 0 && index + 1 < lines.length) {
+      _paintLine(canvas, size, index + 1,
+          enter: 0, exitIn: 0, at: lines[index + 1].time);
+    }
+
+    _paintLine(canvas, size, index,
+        enter: enter, exitIn: exit, at: position);
+  }
+
+  /// 画一句歌词。[enter]/[exit] 由调用方给��（冻结在 0 或 1 即为邻句定格），
+  /// [at] 是这句的「虚拟播放位置」，用来解算扫字播放头。
+  ///
+  /// 原先这些都直接读 `index` / `position`，只能画当前句；
+  /// 拆出来后交接时才能两句同场。
+  void _paintLine(Canvas canvas, Size size, int i,
+      {required double enter,
+      required double exitIn,
+      required Duration at}) {
+    if (i < 0 || i >= lines.length) return;
+    final line = lines[i];
+    if (line.text.trim().isEmpty || line.text == '\u00A0') return;
+
+    final pal = config.palette;
+
+    // 供 _computeSweep / _wordProgressFraction 使用
+    _curLine = i;
+    _curAt = at;
+
+    final dur = _lineDuration(i);
+    final t = ((at - line.time).inMilliseconds / 1000.0).clamp(0.0, dur);
+
+    final trans = config.transition;
+    final fly = config.fly;
+    final useTransition = trans != LyricTransition.none && !fly;
+
+    // 规矩 5 的时长公式在这里要再用一次（amt 的爬升窗口依赖它）
+    final inDur = useTransition
+        ? (dur * 0.30).clamp(0.15, 0.45)
+        : (dur * 0.36).clamp(0.12, 0.6);
 
     // ---- 镜头追踪参数 ----
-    // 打开时由纵深运动接管入场/出场（两者叠加会互相打架），
-    // 但文本特效 / 扫字 / 抖动照常生效。
     final rel = dur > 0 ? _cl(t / dur) : 0.0;
     final flyZ = _currentDepth(rel);
     final flyW = _depthW(flyZ);
     // 越过镜头后淡出，避免巨字糊屏
     final flyFade = flyZ < 0 ? (1 + flyZ / 0.55).clamp(0.0, 1.0) : 1.0;
 
-    // 镜头追踪用整句时长驱动进出场，而非固定秒数
+    // 镜头追踪用整句时长驱动出��，而非固定秒数
     final exit = fly
         ? (rel > 0.62 ? _cl((rel - 0.62) / 0.38) : 0.0)
-        : exitRaw;
+        : exitIn;
     // hold 强度：入场 85% 后 0.25s 升到 1，出场衰减
     final amt = _cl((t - inDur * 0.85) / 0.25) * (1 - exit);
 
-    final seed = _hash(index * 37 + 11);
+    final seed = _hash(i * 37 + 11);
     final u = size.height / 1080.0;
 
     // 字重生长：前半段 cubic-out
@@ -219,30 +263,19 @@ class _JizuraPainter extends CustomPainter {
     // ---- 邻句：画在主句变换之外，避免跟着一起缩放 ----
     if (fly) {
       // 上一句已越过镜头（worldY -1 → 向上冲出画面）
-      if (index - 1 >= 0) {
-        _drawDepthLine(canvas, size, lines[index - 1].text, -0.34, 0.26, -1);
+      if (i - 1 >= 0) {
+        _drawDepthLine(canvas, size, lines[i - 1].text, -0.34, 0.26, -1);
       }
       // 下一句仍在远处（worldY +1 → 位于下方远处）
-      if (index + 1 < lines.length) {
-        _drawDepthLine(canvas, size, lines[index + 1].text, 1.7, 0.34, 1);
+      if (i + 1 < lines.length) {
+        _drawDepthLine(canvas, size, lines[i + 1].text, 1.7, 0.34, 1);
       }
       // 当前句在 worldY 0，只有缩放没有纵向偏移
       canvas.scale(flyW, flyW);
-    } else {
+    } else if (config.layout == LyricLayout.marquee) {
       // ---- 跑马灯：横向滑入滑出 ----
       // 进：从右侧滑到中央（enter 0→1 对应 +W→0）
       // 出：继续向左滑出（exit 0→1 对应 0→-W）
-      if (config.layout == LyricLayout.marquee) {
-        final slide =
-            (1 - enter) * size.width * 1.15 - exit * size.width * 1.15;
-        canvas.translate(slide, 0);
-      }
-    }
-
-    // ---- 跑马灯：横向滑入滑出 ----
-    // 进：从右侧滑到中央（enter 0→1 对应 +W→0）
-    // 出：继续向左滑出（exit 0→1 对应 0→-W）
-    if (config.layout == LyricLayout.marquee) {
       final slide = (1 - enter) * size.width * 1.15 - exit * size.width * 1.15;
       canvas.translate(slide, 0);
     }
@@ -724,13 +757,13 @@ class _JizuraPainter extends CustomPainter {
         final wEnd = w.duration != null
             ? w.time + w.duration!
             : w.time + const Duration(seconds: 1);
-        if (position >= wEnd) {
+        if (_curAt >= wEnd) {
           curIdx = i + 1;
-        } else if (position >= w.time) {
+        } else if (_curAt >= w.time) {
           curIdx = i;
           final total = wEnd - w.time;
           intra = total.inMilliseconds > 0
-              ? ((position - w.time).inMilliseconds / total.inMilliseconds)
+              ? ((_curAt - w.time).inMilliseconds / total.inMilliseconds)
                   .clamp(0.0, 1.0)
               : 1.0;
           break;
@@ -1203,14 +1236,14 @@ tp.text = TextSpan(text: g.ch, style: st);
   }
 
   /// 该字在整句中的横向完成比例（0~1），用于高亮特效
-  double _wordProgressFraction(_Glyph g) {
-    if (index < 0 || index >= lines.length) return 0;
-    final line = lines[index];
+double _wordProgressFraction(_Glyph g) {
+    if (_curLine < 0 || _curLine >= lines.length) return 0;
+    final line = lines[_curLine];
     if (!line.hasWords || g.i >= line.words!.length) return 0;
     final w = line.words![g.i];
     final d = w.duration ?? const Duration(milliseconds: 400);
-    if (d.inMilliseconds <= 0) return position >= w.time ? 1 : 0;
-    return ((position - w.time).inMilliseconds / d.inMilliseconds)
+    if (d.inMilliseconds <= 0) return _curAt >= w.time ? 1 : 0;
+    return ((_curAt - w.time).inMilliseconds / d.inMilliseconds)
         .clamp(0.0, 1.0);
   }
 
