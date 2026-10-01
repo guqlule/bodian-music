@@ -23,6 +23,9 @@ class PvLyricsScreen extends ConsumerStatefulWidget {
 class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
   List<LyricLine> _lyrics = [];
   LyricEffectConfig _config = const LyricEffectConfig();
+  /// 随机模式下当前使用的特效（每首歌一套）
+  LyricEffectConfig _active = const LyricEffectConfig();
+  String _randomSeedKey = '';
 
   @override
   void initState() {
@@ -32,6 +35,21 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
       final cfg = await LyricEffectConfig.load();
       if (mounted) setState(() => _config = cfg);
     });
+  }
+
+  /// 随机模式：按歌曲 id 生成稳定的一套特效（同一首歌内不跳变）
+  void _syncRandom(String musicId) {
+    if (!_config.random) {
+      if (_randomSeedKey.isNotEmpty) {
+        _randomSeedKey = '';
+        setState(() => _active = _config);
+      }
+      return;
+    }
+    if (musicId == _randomSeedKey) return;
+    _randomSeedKey = musicId;
+    final seed = musicId.isEmpty ? 1 : musicId.hashCode;
+    setState(() => _active = LyricEffectConfig.randomized(seed));
   }
 
   void _applyLyric(String lyricText) {
@@ -56,12 +74,16 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
   @override
   Widget build(BuildContext context) {
     final position = ref.watch(positionProvider).valueOrNull ?? Duration.zero;
+    final musicId = ref.watch(currentMusicProvider).valueOrNull?.id ?? '';
+
+    // 随机模式：切歌时换一套特效
+    _syncRandom(musicId);
 
     ref.listen(lyricProvider, (prev, next) {
       _applyLyric(next.valueOrNull?['lyric'] ?? '');
     });
 
-    final pal = _config.palette;
+    final pal = _active.palette;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
@@ -81,7 +103,7 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
                         : JizuraLyricsView(
                             lines: _lyrics,
                             position: position,
-                            config: _config,
+                            config: _active,
                             onSeek: (t) =>
                                 ref.read(playerServiceProvider).seek(t),
                           ),

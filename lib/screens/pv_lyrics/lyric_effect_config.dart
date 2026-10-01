@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -112,6 +113,12 @@ class LyricEffectConfig {
   /// 波浪/呼吸等动效强度 0~1.5
   final double motion;
 
+  /// 扫字高亮（卡拉OK）：已唱部分用强调色逐字扫过
+  final bool sweep;
+
+  /// 随机特效：每首歌自动随机一套版式/动画/文本
+  final bool random;
+
   const LyricEffectConfig({
     this.layout = LyricLayout.huge,
     this.entrance = LyricEntrance.pop,
@@ -120,6 +127,8 @@ class LyricEffectConfig {
     this.treat = LyricTreat.glow,
     this.palette = LyricPalette.noir,
     this.motion = 1.0,
+    this.sweep = true,
+    this.random = false,
   });
 
   LyricEffectConfig copyWith({
@@ -130,6 +139,8 @@ class LyricEffectConfig {
     LyricTreat? treat,
     LyricPalette? palette,
     double? motion,
+    bool? sweep,
+    bool? random,
   }) {
     return LyricEffectConfig(
       layout: layout ?? this.layout,
@@ -139,6 +150,8 @@ class LyricEffectConfig {
       treat: treat ?? this.treat,
       palette: palette ?? this.palette,
       motion: motion ?? this.motion,
+      sweep: sweep ?? this.sweep,
+      random: random ?? this.random,
     );
   }
 
@@ -150,6 +163,8 @@ class LyricEffectConfig {
         'treat': treat.name,
         'palette': palette.name,
         'motion': motion,
+        'sweep': sweep,
+        'random': random,
       };
 
   factory LyricEffectConfig.fromJson(Map<String, dynamic> json) {
@@ -169,6 +184,36 @@ class LyricEffectConfig {
       treat: pick(LyricTreat.values, json['treat'] as String?, LyricTreat.glow),
       palette: pick(LyricPalette.values, json['palette'] as String?, LyricPalette.noir),
       motion: (json['motion'] as num?)?.toDouble() ?? 1.0,
+      sweep: json['sweep'] as bool? ?? true,
+      random: json['random'] as bool? ?? false,
+    );
+  }
+
+  /// 随机模式：按种子生成一套特效组合。
+  /// 同一首歌内稳定（换歌会换一套），避免每帧乱跳。
+  factory LyricEffectConfig.randomized(int seed) {
+    double h(int salt) {
+      final x = math.sin((seed + salt) * 127.1 + 311.7) * 43758.5453;
+      return x - x.floor();
+    }
+
+    final layouts = LyricLayout.values;
+    final entrances = LyricEntrance.values;
+    final holds = LyricHold.values;
+    final exits = LyricExit.values;
+    final treats = LyricTreat.values;
+    final palettes = LyricPalette.values;
+
+    return LyricEffectConfig(
+      layout: layouts[(h(1) * layouts.length).floor().clamp(0, layouts.length - 1)],
+      entrance: entrances[(h(2) * entrances.length).floor().clamp(0, entrances.length - 1)],
+      hold: holds[(h(3) * holds.length).floor().clamp(0, holds.length - 1)],
+      exit: exits[(h(4) * exits.length).floor().clamp(0, exits.length - 1)],
+      treat: treats[(h(5) * treats.length).floor().clamp(0, treats.length - 1)],
+      palette: palettes[(h(6) * palettes.length).floor().clamp(0, palettes.length - 1)],
+      motion: 0.75 + h(7) * 0.6,
+      sweep: h(8) > 0.25,
+      random: true,
     );
   }
 
@@ -246,6 +291,22 @@ Future<void> showLyricEffectSheet(BuildContext context) async {
                   child: ListView(
                     padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
                     children: [
+                      _ToggleRow(
+                        title: '扫字高亮',
+                        desc: '已唱部分用强调色逐字扫过（卡拉OK）',
+                        value: cfg.sweep,
+                        accent: cfg.palette.accent,
+                        onChanged: (v) => apply(cfg.copyWith(sweep: v)),
+                      ),
+                      const SizedBox(height: 6),
+                      _ToggleRow(
+                        title: '随机特效',
+                        desc: '每首歌自动随机一套版式 / 动画 / 文本 / 配色',
+                        value: cfg.random,
+                        accent: cfg.palette.accent,
+                        onChanged: (v) => apply(cfg.copyWith(random: v)),
+                      ),
+                      const SizedBox(height: 22),
                       _PaletteRow(cfg: cfg, apply: apply),
                       const SizedBox(height: 22),
                       _Section<LyricLayout>(
@@ -386,6 +447,61 @@ class _Section<T> extends StatelessWidget {
           const SizedBox(height: 6),
           Text(descOf(values.firstWhere(isSelected, orElse: () => values.first)),
               style: const TextStyle(color: Colors.white24, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToggleRow extends StatelessWidget {
+  final String title;
+  final String desc;
+  final bool value;
+  final Color accent;
+  final ValueChanged<bool> onChanged;
+
+  const _ToggleRow({
+    required this.title,
+    required this.desc,
+    required this.value,
+    required this.accent,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C21),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+          color: value ? accent : Colors.white.withValues(alpha: 0.07),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(title,
+                    style: TextStyle(
+                        color: value ? Colors.white : Colors.white70,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(desc,
+                    style: const TextStyle(color: Colors.white38, fontSize: 11)),
+              ],
+            ),
+          ),
+          Switch(
+            value: value,
+            activeThumbColor: accent,
+            onChanged: onChanged,
+          ),
         ],
       ),
     );

@@ -208,7 +208,7 @@ class _JizuraPainter extends CustomPainter {
       return;
     }
 
-    // ---- 色差错位（ghost）----
+// ---- 色差错位（ghost）----
     final chromaBase = config.treat == LyricTreat.chroma ? 1.5 : 0.7;
     final chroma = chromaBase * (1.0 + amt * 0.25);
     if (config.treat != LyricTreat.outline) {
@@ -218,9 +218,12 @@ class _JizuraPainter extends CustomPainter {
           Offset(-3.4 * chroma * u, -1.3 * chroma * u), weightK, amt, t, false);
     }
 
+    // ---- 扫字：算出播放头位置（像素），逐字插值 alpha ----
+    final sweep = _computeSweep(line, layout, t, dur);
+
     // ---- 主层 ----
     _pass(canvas, layout, pal.fg.withValues(alpha: globalAlpha), Offset.zero,
-        weightK, amt, t, true);
+        weightK, amt, t, true, sweep);
 
     canvas.restore();
 
@@ -253,6 +256,92 @@ class _JizuraPainter extends CustomPainter {
         : lines[i].time + const Duration(seconds: 4);
     final d = end - lines[i].time;
     return d.inMilliseconds <= 0 ? 4.0 : d.inMilliseconds / 1000.0;
+  }
+
+  // ---------------- 扫字播放头 ----------------
+  ///
+  /// 返回 (播放头像素位置, 软带半宽)；未启用时 second 为 null。
+  ///
+  /// 优先用逐字时间戳（KRC/QRC）：
+  ///   maskX = 已完成字的累计宽度 + 当前字内进度 × 当前字宽
+  /// 软带半宽固定为「行内平均字宽」——若用当前字宽，
+  /// 字切换瞬间半宽突变会让边缘 alpha 断崖闪烁。
+  ///
+  /// 无逐字时间戳时退化为行级进度（按本行已唱比例扫过整行）。
+  ({double maskX, double halfBand})? _computeSweep(
+      LyricLine line, _Layout layout, double t, double dur) {
+    if (!config.sweep) return null;
+    if (layout.glyphs.isEmpty) return null;
+    if (line.hasWords && line.words!.isNotEmpty) {
+      final words = line.words!;
+      final n = words.length < layout.glyphs.length
+          ? words.length
+          : layout.glyphs.length;
+
+      double maskX;
+      var curIdx = -1;
+      var intra = 0.0;
+      for (int i = 0; i < n; i++) {
+        final w = words[i];
+        final wEnd = w.duration != null
+            ? w.time + w.duration!
+            : w.time + const Duration(seconds: 1);
+        if (position >= wEnd) {
+          curIdx = i + 1;
+        } else if (position >= w.time) {
+          curIdx = i;
+          final total = wEnd - w.time;
+          intra = total.inMilliseconds > 0
+              ? ((position - w.time).inMilliseconds / total.inMilliseconds)
+                  .clamp(0.0, 1.0)
+              : 1.0;
+          break;
+        } else {
+          curIdx = i;
+          intra = 0.0;
+          break;
+        }
+      }
+
+      if (curIdx >= n) {
+        maskX = double.infinity;
+      } else if (curIdx < 0) {
+        maskX = -1.0;
+      } else {
+        final w = layout.glyphs[curIdx];
+        maskX = w.x + w.w * intra;
+      }
+
+      // 行内平均字宽
+      final totalW = layout.glyphs.isEmpty
+          ? 0.0
+          : layout.glyphs.last.x + layout.glyphs.last.w;
+      final meanW = layout.glyphs.isEmpty
+          ? 0.0
+          : (totalW / layout.glyphs.length);
+      return (maskX: maskX, halfBand: meanW);
+    }
+
+    // 行级退化：按本行进度扫过整行
+    final p = _cl(t / math.max(dur, 0.01));
+    final totalW =
+        layout.glyphs.isEmpty ? 0.0 : layout.glyphs.last.x + layout.glyphs.last.w;
+    return (maskX: totalW * p, halfBand: totalW * 0.18);
+  }
+
+  /// X 位置处的扫光权重 0~1（1 = 已唱）
+  static double _sweepWeight(double x, double maskX, double halfBand) {
+    if (halfBand <= 0) return x <= maskX ? 1.0 : 0.0;
+    if (maskX.isInfinite) return 1.0;
+    if (maskX < 0) return 0.0;
+    final bandStart = maskX - halfBand;
+    final bandSpan = halfBand * 2;
+    if (x <= bandStart) return 1.0;
+    final k = (x - bandStart) / bandSpan;
+    if (k >= 1.0) return 0.0;
+    // smoothstep 让亮暗过渡更柔和
+    final e = k * k * (3 - 2 * k);
+    return 1.0 - e;
   }
 
   // ---------------- 入场 ----------------
@@ -455,7 +544,10 @@ class _JizuraPainter extends CustomPainter {
     return _Layout(glyphs, fs, [glyphs]);
   }
 
-  // ---------------- 绘制一层 ----------------
+// ---------------- 绘制一层 ----------------
+  bool _isStrokeTreat(LyricTreat t) =>
+      t == LyricTreat.outline || t == LyricTreat.neon;
+
   void _pass(
     Canvas canvas,
     _Layout layout,
@@ -464,8 +556,9 @@ class _JizuraPainter extends CustomPainter {
     double weightK,
     double amt,
     double t,
-    bool isMain,
-  ) {
+    bool isMain, [
+    ({double maskX, double halfBand})? sweep,
+  ]) {
     if (layout.glyphs.isEmpty) return;
     final pal = config.palette;
     final treat = config.treat;
@@ -507,9 +600,18 @@ class _JizuraPainter extends CustomPainter {
           break;
       }
 
-      // 高亮特效：已唱部分渐变到强调色（逐字扫过）
+// 高亮特效 / 扫字：已唱部分渐变到强调色
       var glyphColor = color;
-      if (isMain && treat == LyricTreat.marker) {
+      double sweepL = 0, sweepR = 0;
+      if (isMain && sweep != null) {
+        // 在字的左右边缘分别采样播放头，得到字内渐变
+        sweepL = _sweepWeight(g.x, sweep.maskX, sweep.halfBand);
+        sweepR = _sweepWeight(g.x + g.w, sweep.maskX, sweep.halfBand);
+        // 未唱部分压暗，已唱部分转强调色
+        final bright = Color.lerp(color, pal.accent, 0.9)!;
+        final dim = Color.lerp(color, pal.fg, 0.0)!;
+        glyphColor = Color.lerp(dim, bright, sweepL)!;
+      } else if (isMain && treat == LyricTreat.marker) {
         final w = _wordProgressFraction(g);
         glyphColor = Color.lerp(color, pal.accent, w)!;
       }
@@ -643,7 +745,30 @@ class _JizuraPainter extends CustomPainter {
         continue;
       }
 
-      final p = Offset(g.x + dx, g.y + dy);
+final p = Offset(g.x + dx, g.y + dy);
+
+      // 扫字：字内渐变（已唱→未唱），保证扫过单个字时是渐变而非跳变
+      if (sweep != null && (sweepL - sweepR).abs() > 0.02 && !_isStrokeTreat(treat)) {
+        final brightC = Color.lerp(color, pal.accent, 0.9)!.withValues(
+            alpha: color.a * (0.35 + 0.65 * sweepL));
+        final dimC = color.withValues(alpha: color.a * (0.35 + 0.65 * sweepL));
+        final sweepStyle = TextStyle(
+          fontSize: g.fs,
+          fontWeight: FontWeight.w900,
+          height: 1.0,
+          shadows: st.shadows,
+          foreground: Paint()
+            ..shader = ui.Gradient.linear(
+              Offset(p.dx, 0),
+              Offset(p.dx + math.max(g.w, 1.0), 0),
+              [brightC, dimC],
+            ),
+        );
+        tp.text = TextSpan(text: g.ch, style: sweepStyle);
+        tp.layout();
+        tp.paint(canvas, p);
+        continue;
+      }
 
       // 描边填充（强调色粗描边 + 白字填充）需要两层绘制
       if (treat == LyricTreat.strokeFill && isMain) {
