@@ -55,7 +55,7 @@ class LyricApiService {
       return result;
     }
 
-    // 跨源兜底：本源歌词为空时，用网易云歌词接口按歌名+歌手搜索
+    // 跨源兜底 1：本源歌词为空时，用网易云歌词接口按歌名+歌手搜索
     logDebug('[LyricApi] 本源歌词为空，尝试网易云跨源兜底');
     try {
       final fallback = await _searchWyLyricByKeyword(music);
@@ -67,11 +67,27 @@ class LyricApiService {
       logDebug('[LyricApi] 网易云跨源兜底失败: $e');
     }
 
+    // 跨源兜底 2：酷狗 KRC（唯一稳定提供逐字歌词的公开接口）。
+    // 网易云/QQ 接口只返回行级歌词，所以任何源都能从这里拿到逐字版本。
+    logDebug('[LyricApi] 尝试酷狗 KRC 跨源逐字兜底');
+    try {
+      final kg = await _searchKgLyricByKeyword(music);
+      if (kg != null && kg['lyric'] != null && kg['lyric']!.isNotEmpty) {
+        logDebug('[LyricApi] 酷狗 KRC 跨源兜底成功（逐字）');
+        return kg;
+      }
+    } catch (e) {
+      logDebug('[LyricApi] 酷狗 KRC 兜底失败: $e');
+    }
+
     return result;
   }
 
   /// 按歌名+歌手搜索歌词（用于本地歌曲无 .lrc 时在线兜底）
-  Future<Map<String, String?>?> searchLyricByKeyword(String name, String singer) async {
+  ///
+  /// 优先用酷狗 KRC（逐字），失败再退网易云（行级）。
+  Future<Map<String, String?>?> searchLyricByKeyword(
+      String name, String singer) async {
     final music = MusicInfo(
       id: 'temp',
       name: name,
@@ -80,6 +96,10 @@ class LyricApiService {
       duration: 0,
       source: 'wy',
     );
+    try {
+      final kg = await _searchKgLyricByKeyword(music);
+      if (kg != null && (kg['lyric'] ?? '').isNotEmpty) return kg;
+    } catch (_) {}
     return _searchWyLyricByKeyword(music);
   }
 
@@ -320,5 +340,93 @@ class LyricApiService {
       }
     }
     return null;
+  }
+
+  // ==================== 跨源：酷狗 KRC 逐字兜底 ====================
+  /// 用「歌名+歌手」到酷狗搜索 KRC（逐字歌词）。
+  ///
+  /// 酷狗是唯一稳定提供逐字歌词的公开接口（网易云/QQ 只给行级），
+  /// 所以任何音源的歌曲都可以从这里拿到逐字版本。
+  ///
+  /// 注意：搜索接口对「歌名 歌手」联合词的召回不稳定（实测「孤勇者 陈奕迅」
+  /// 返回 0 条，而单用歌名能命中），因此先试联合词，再退回纯歌名。
+  /// 纯歌名召回更宽，因此**必须校验候选的歌手是否匹配**，避免拿到同名歌的词。
+  Future<Map<String, String?>?> _searchKgLyricByKeyword(MusicInfo music) async {
+    final title = music.name.trim();
+    if (title.isEmpty) return null;
+
+    final keywords = <String>[
+      if (music.singer.trim().isNotEmpty) '$title ${music.singer.trim()}',
+      title,
+    ];
+
+    for (final kw in keywords) {
+      final candidates = await _kgLyricSearch(kw);
+      for (final c in candidates) {
+        // 歌手必须匹配（纯歌名搜索时尤其重要）
+        if (!_singerMatches(c['singer'] as String?, music.singer)) continue;
+        final lrcId = c['id'];
+        final accessKey = c['accesskey'];
+        if (lrcId == null || accessKey == null) continue;
+
+        final krc = await _downloadKg('krc', lrcId, accessKey);
+        if (krc != null && krc.trim().isNotEmpty) {
+          return {'lyric': krc, 'tlyric': null, 'krc': '1'};
+        }
+        // 该候选没有逐字，退回行级
+        final lrc = await _downloadKg('lrc', lrcId, accessKey);
+        if (lrc != null && lrc.trim().isNotEmpty) {
+          return {'lyric': lrc, 'tlyric': null};
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<List<Map<String, dynamic>>> _kgLyricSearch(String keyword) async {
+    try {
+      final url = Uri.parse(
+        'https://krcs.kugou.com/search?ver=1&man=yes&client=pc'
+        '&keyword=${Uri.encodeComponent(keyword)}'
+        '&hash=&timelength=0&lrctxt=1',
+      );
+      final resp = await http.get(url, headers: {
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      }).timeout(const Duration(seconds: 8));
+      if (resp.statusCode != 200) return const [];
+
+      final data = jsonDecode(utf8.decode(resp.bodyBytes));
+      final list = data['candidates'] as List?;
+      if (list == null || list.isEmpty) return const [];
+      return list.cast<Map<String, dynamic>>();
+    } catch (e) {
+      logDebug('[LyricApi] KG 搜索失败: $e');
+      return const [];
+    }
+  }
+
+  /// 歌手匹配：候选歌手与目标歌手有交集即认为匹配。
+  /// 酷狗歌手字段常为「A、B」多歌手形式，只要有一人命中即可。
+  static bool _singerMatches(String? candidate, String target) {
+    if (target.trim().isEmpty) return true;
+    if (candidate == null || candidate.trim().isEmpty) return false;
+    final t = target.trim();
+    final c = candidate.trim();
+    if (c == t) return true;
+    final cParts = c.split(RegExp(r'[,/、&]')).map((e) => e.trim()).where((e) => e.isNotEmpty);
+    // 目标歌手也可能是多歌手，取交集
+    final tParts = t.split(RegExp(r'[,/、&]')).map((e) => e.trim()).where((e) => e.isNotEmpty);
+    for (final tp in tParts) {
+      for (final cp in cParts) {
+        if (cp == tp) return true;
+        // 单名互相包含（如「周杰伦」vs「周杰倫feat.」）
+        if (cp.length >= 2 && tp.length >= 2 &&
+            (cp.contains(tp) || tp.contains(cp))) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }
