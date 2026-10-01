@@ -184,6 +184,7 @@ class LyricEffectConfig {
       sweep: sweep ?? this.sweep,
       random: random ?? this.random,
       fly: fly ?? this.fly,
+      transition: transition ?? this.transition,
     );
   }
 
