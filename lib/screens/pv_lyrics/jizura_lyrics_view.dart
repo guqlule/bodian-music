@@ -800,14 +800,18 @@ final W = size.width;
 // 高亮特效 / 扫字：已唱部分渐变到强调色
       var glyphColor = color;
       double sweepL = 0, sweepR = 0;
+      var sweepDim = color;
+      var sweepBright = color;
       if (isMain && sweep != null) {
         // 在字的左右边缘分别采样播放头，得到字内渐变
         sweepL = _sweepWeight(g.x, sweep.maskX, sweep.halfBand);
         sweepR = _sweepWeight(g.x + g.w, sweep.maskX, sweep.halfBand);
-        // 未唱部分压暗，已唱部分转强调色
-        final bright = Color.lerp(color, pal.accent, 0.9)!;
-        final dim = Color.lerp(color, pal.fg, 0.0)!;
-        glyphColor = Color.lerp(dim, bright, sweepL)!;
+        // 未唱压暗 + 已唱转强调色。
+        // 明暗差必须足够大：当某个配色的 accent 和 fg 接近时，
+        // 只做颜色 lerp 会完全看不出扫字发生过。
+        sweepDim = color.withValues(alpha: color.a * 0.42);
+        sweepBright = Color.lerp(color, pal.accent, 0.95)!;
+        glyphColor = Color.lerp(sweepDim, sweepBright, sweepL)!;
       } else if (isMain && treat == LyricTreat.marker) {
         final w = _wordProgressFraction(g);
         glyphColor = Color.lerp(color, pal.accent, w)!;
@@ -824,8 +828,8 @@ final W = size.width;
             foreground: Paint()
               ..style = PaintingStyle.stroke
               ..strokeWidth = math.max(1.6, g.fs * 0.028)
-              ..strokeJoin = StrokeJoin.round
-              ..color = color,
+..strokeJoin = StrokeJoin.round
+              ..color = glyphColor,
           );
           break;
         case LyricTreat.strokeFill:
@@ -851,14 +855,14 @@ final W = size.width;
               ..style = PaintingStyle.stroke
               ..strokeWidth = math.max(1.4, g.fs * 0.026)
               ..strokeJoin = StrokeJoin.round
-              ..color = Color.lerp(color, Colors.white, 0.4)!,
+              ..color = Color.lerp(glyphColor, Colors.white, 0.4)!,
             shadows: [
               Shadow(color: pal.accent.withValues(alpha: 0.8), blurRadius: 10),
               Shadow(color: pal.accent2.withValues(alpha: 0.6), blurRadius: 24),
             ],
           );
           break;
-        case LyricTreat.gradient:
+case LyricTreat.gradient:
           final top = Color.lerp(color, pal.accent, 0.35)!;
           st = TextStyle(
             fontSize: g.fs,
@@ -868,7 +872,7 @@ final W = size.width;
               ..shader = ui.Gradient.linear(
                 Offset(0, -g.fs * 0.5),
                 Offset(0, g.fs * 0.5),
-                [top, color],
+                [top, glyphColor],
               ),
           );
           break;
@@ -877,7 +881,7 @@ final W = size.width;
             fontSize: g.fs,
             fontWeight: FontWeight.w900,
             height: 1.0,
-            color: color,
+            color: glyphColor,
             shadows: isMain
                 ? [
                     Shadow(
@@ -919,8 +923,8 @@ final W = size.width;
           foreground: Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = weightK * g.fs * 0.05
-            ..strokeJoin = StrokeJoin.round
-            ..color = color,
+..strokeJoin = StrokeJoin.round
+            ..color = glyphColor,
           color: null,
           shadows: st.shadows,
         );
@@ -932,7 +936,7 @@ final W = size.width;
           fontSize: g.fs,
           fontWeight: FontWeight.w900,
           height: 1.0,
-          color: treat == LyricTreat.gradient ? null : color,
+          color: treat == LyricTreat.gradient ? null : glyphColor,
           foreground: treat == LyricTreat.gradient ? st.foreground : null,
           shadows: st.shadows,
         );
@@ -946,9 +950,8 @@ final p = Offset(g.x + dx, g.y + dy);
 
       // 扫字：字内渐变（已唱→未唱），保证扫过单个字时是渐变而非跳变
       if (sweep != null && (sweepL - sweepR).abs() > 0.02 && !_isStrokeTreat(treat)) {
-        final brightC = Color.lerp(color, pal.accent, 0.9)!.withValues(
-            alpha: color.a * (0.35 + 0.65 * sweepL));
-        final dimC = color.withValues(alpha: color.a * (0.35 + 0.65 * sweepL));
+        final leftC = Color.lerp(sweepDim, sweepBright, sweepL)!;
+        final rightC = Color.lerp(sweepDim, sweepBright, sweepR)!;
         final sweepStyle = TextStyle(
           fontSize: g.fs,
           fontWeight: FontWeight.w900,
@@ -958,7 +961,7 @@ final p = Offset(g.x + dx, g.y + dy);
             ..shader = ui.Gradient.linear(
               Offset(p.dx, 0),
               Offset(p.dx + math.max(g.w, 1.0), 0),
-              [brightC, dimC],
+              [leftC, rightC],
             ),
         );
         tp.text = TextSpan(text: g.ch, style: sweepStyle);
@@ -976,7 +979,7 @@ final p = Offset(g.x + dx, g.y + dy);
           fontSize: g.fs,
           fontWeight: FontWeight.w900,
           height: 1.0,
-          color: color,
+          color: glyphColor,
         );
         tp.text = TextSpan(text: g.ch, style: fillStyle);
         tp.layout();
