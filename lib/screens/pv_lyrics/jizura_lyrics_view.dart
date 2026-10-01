@@ -174,8 +174,23 @@ class _JizuraPainter extends CustomPainter {
         : (dur * 0.3).clamp(0.14, 0.55);
     final outStart = dur - outDur;
 
-    final enter = _cl(t / inDur);
-    final exit = outDur > 0.002 ? _cl((t - outStart) / outDur) : 0.0;
+final enter = _cl(t / inDur);
+    final exitRaw = outDur > 0.002 ? _cl((t - outStart) / outDur) : 0.0;
+
+    // ---- 镜头追踪参数 ----
+    // 打开时由纵深运动接管入场/出场（两者叠加会互相打架），
+    // 但文本特效 / 扫字 / 抖动照常生效。
+    final fly = config.fly;
+    final rel = dur > 0 ? _cl(t / dur) : 0.0;
+    final flyZ = _currentDepth(rel);
+    final flyW = _depthW(flyZ);
+    // 越过镜头后淡出，避免巨字糊屏
+    final flyFade = flyZ < 0 ? (1 + flyZ / 0.55).clamp(0.0, 1.0) : 1.0;
+
+    // 镜头追踪用整句时长驱动进出场，而非固定秒数
+    final exit = fly
+        ? (rel > 0.62 ? _cl((rel - 0.62) / 0.38) : 0.0)
+        : exitRaw;
     // hold 强度：入场 85% 后 0.25s 升到 1，出场衰减
     final amt = _cl((t - inDur * 0.85) / 0.25) * (1 - exit);
 
@@ -187,8 +202,31 @@ class _JizuraPainter extends CustomPainter {
 
     final layout = _layout(line.text, size);
 
-canvas.save();
+    canvas.save();
     canvas.translate(size.width / 2, size.height / 2);
+
+    // ---- 邻句：画在主句变换之外，避免跟着一起缩放 ----
+    if (fly) {
+      // 上一句已越过镜头（worldY -1 → 向上冲出画面）
+      if (index - 1 >= 0) {
+        _drawDepthLine(canvas, size, lines[index - 1].text, -0.34, 0.26, -1);
+      }
+      // 下一句仍在远处（worldY +1 → 位于下方远处）
+      if (index + 1 < lines.length) {
+        _drawDepthLine(canvas, size, lines[index + 1].text, 1.7, 0.34, 1);
+      }
+      // 当前句在 worldY 0，只有缩放没有纵向偏移
+      canvas.scale(flyW, flyW);
+    } else {
+      // ---- 跑马灯：横向滑入滑出 ----
+      // 进：从右侧滑到中央（enter 0→1 对应 +W→0）
+      // 出：继续向左滑出（exit 0→1 对应 0→-W）
+      if (config.layout == LyricLayout.marquee) {
+        final slide =
+            (1 - enter) * size.width * 1.15 - exit * size.width * 1.15;
+        canvas.translate(slide, 0);
+      }
+    }
 
     // ---- 跑马灯：横向滑入滑出 ----
     // 进：从右侧滑到中央（enter 0→1 对应 +W→0）
@@ -198,19 +236,23 @@ canvas.save();
       canvas.translate(slide, 0);
     }
 
-    // ---- 入场变换 ----
-    final xf = _entranceTransform(config.entrance, enter, seed, layout.size);
-    canvas.translate(xf.dx, xf.dy);
-    if (xf.rot != 0) canvas.rotate(xf.rot);
-    canvas.scale(xf.scale, xf.scaleY);
-
-    // ---- 出场变换 ----
+// 出场变换只算一次：镜头追踪时只用它的 alpha 做淡出
     final xo = _exitTransform(config.exit, exit, seed);
-    canvas.translate(xo.dx, xo.dy);
-    canvas.scale(xo.scale, xo.scale);
-    if (xo.rot != 0) canvas.rotate(xo.rot);
 
-    final globalAlpha = (xo.alpha).clamp(0.0, 1.0);
+// ---- 入场变换（镜头追踪时跳过，运动已由纵深承担）----
+    if (!fly) {
+      final xf = _entranceTransform(config.entrance, enter, seed, layout.size);
+      canvas.translate(xf.dx, xf.dy);
+      if (xf.rot != 0) canvas.rotate(xf.rot);
+      canvas.scale(xf.scale, xf.scaleY);
+
+      // ---- 出场变换 ----
+      canvas.translate(xo.dx, xo.dy);
+      canvas.scale(xo.scale, xo.scale);
+      if (xo.rot != 0) canvas.rotate(xo.rot);
+    }
+
+    final globalAlpha = ((fly ? 1.0 : xo.alpha) * flyFade).clamp(0.0, 1.0);
     if (globalAlpha <= 0.003) {
       canvas.restore();
       return;
@@ -346,6 +388,68 @@ canvas.save();
           weightK, amt, t, false);
       canvas.restore();
     }
+  }
+
+  // ---------------- Z 轴穿越（镜头追踪）----------------
+  //
+  /// 投影用单个透视因子 w = 1 / (1 + z)：
+  ///   z > 0（远处）→ w < 1，缩小并向消失点（屏幕中心）收拢
+  ///   z = 0（焦点）→ w = 1，居中满幅
+  ///   z < 0（越过镜头）→ w > 1，放大并反向冲出画面
+  /// 缩放与纵向偏移都用 w，所以远处句子会自然向中心聚拢，
+  /// 形成纵深隧道感。
+  static double _depthW(double z) => 1.0 / (1.0 + z);
+
+  /// 当前句的深度：前半程从远处逼近焦点，后半程掠过镜头。
+  ///
+  /// 用**线性**而非缓动：等速飞行才有「镜头在推进」的感觉，
+  /// outCubic 会把大部分位移挤在前 20%，剩下的时间几乎不动。
+  double _currentDepth(double rel) {
+    if (rel < 0.55) return 1.0 - rel / 0.55; // 1 → 0
+    return -((rel - 0.55) / 0.45) * 0.55; // 0 → -0.55
+  }
+
+  /// 在给定深度画一句歌词（邻句用，不走完整特效链，保证性能）
+  ///
+  /// [worldY] 是该句在世界坐标里的纵向槽位：0=当前句（居中），
+  /// +1=下一句（屏幕下方），-1=上一句（屏幕上方，已冲向镜头外）。
+  /// 屏幕偏移 = worldY × 间距 × w，所以远处句子会向中心收拢、
+  /// 越过镜头的句子会向上方冲出画面。
+  void _drawDepthLine(Canvas canvas, Size size, String text, double z,
+      double alpha, double worldY) {
+    final clean = text.replaceAll('\u00A0', '').trim();
+    if (clean.isEmpty || alpha <= 0.02) return;
+    final pal = config.palette;
+
+    final w = _depthW(z);
+    if (w <= 0.04 || w > 6.0) return; // 太远或已完全掠过镜头
+
+    final fs = (math.min(size.height * 0.42, size.width * 0.86) * w)
+        .clamp(10.0, 400.0);
+    if (fs < 10.5) return;
+
+    final tp = TextPainter(
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+      maxLines: 3,
+      ellipsis: '…',
+    )..text = TextSpan(
+        text: clean,
+        style: TextStyle(
+          fontSize: fs,
+          fontWeight: FontWeight.w800,
+          height: 1.1,
+          letterSpacing: -0.02 * fs,
+          color: pal.fg.withValues(alpha: alpha),
+        ),
+      );
+    tp.layout(maxWidth: size.width * 0.9);
+
+    final dy = size.height * 0.30 * w * worldY;
+    tp.paint(
+      canvas,
+      Offset((size.width - tp.width) / 2, size.height / 2 + dy - tp.height / 2),
+    );
   }
 
   // ---------------- 时长 ----------------

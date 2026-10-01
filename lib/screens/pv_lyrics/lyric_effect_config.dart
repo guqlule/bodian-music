@@ -120,6 +120,10 @@ class LyricEffectConfig {
   /// 随机特效：每首歌自动随机一套版式/动画/文本
   final bool random;
 
+  /// 镜头追踪（Z 轴穿越）：当前句从纵深逼近焦点再掠过镜头，
+  /// 上一句上浮消失、下一句从深处浮现。
+  final bool fly;
+
   const LyricEffectConfig({
     this.layout = LyricLayout.huge,
     this.entrance = LyricEntrance.pop,
@@ -130,6 +134,7 @@ class LyricEffectConfig {
     this.motion = 1.0,
     this.sweep = true,
     this.random = false,
+    this.fly = false,
   });
 
   LyricEffectConfig copyWith({
@@ -142,6 +147,7 @@ class LyricEffectConfig {
     double? motion,
     bool? sweep,
     bool? random,
+    bool? fly,
   }) {
     return LyricEffectConfig(
       layout: layout ?? this.layout,
@@ -153,6 +159,7 @@ class LyricEffectConfig {
       motion: motion ?? this.motion,
       sweep: sweep ?? this.sweep,
       random: random ?? this.random,
+      fly: fly ?? this.fly,
     );
   }
 
@@ -166,6 +173,7 @@ class LyricEffectConfig {
         'motion': motion,
         'sweep': sweep,
         'random': random,
+        'fly': fly,
       };
 
   factory LyricEffectConfig.fromJson(Map<String, dynamic> json) {
@@ -187,6 +195,7 @@ class LyricEffectConfig {
       motion: (json['motion'] as num?)?.toDouble() ?? 1.0,
       sweep: json['sweep'] as bool? ?? true,
       random: json['random'] as bool? ?? false,
+      fly: json['fly'] as bool? ?? false,
     );
   }
 
@@ -218,6 +227,7 @@ class LyricEffectConfig {
       motion: 0.75 + h(7) * 0.6,
       sweep: h(8) > 0.25,
       random: true,
+      fly: h(9) > 0.5,
     );
   }
 
@@ -301,6 +311,15 @@ Future<void> showLyricEffectSheet(BuildContext context) async {
                         value: cfg.sweep,
                         accent: cfg.palette.accent,
                         onChanged: (v) => apply(cfg.copyWith(sweep: v)),
+                      ),
+                      const SizedBox(height: 6),
+                      _ToggleRow(
+                        title: '镜头追踪',
+                        desc: 'Z 轴穿越：当前句从纵深逼近再掠过镜头，'
+                            '上下句在景深中进出（会接管入场/出场位移）',
+                        value: cfg.fly,
+                        accent: cfg.palette.accent,
+                        onChanged: (v) => apply(cfg.copyWith(fly: v)),
                       ),
                       const SizedBox(height: 6),
                       _ToggleRow(
