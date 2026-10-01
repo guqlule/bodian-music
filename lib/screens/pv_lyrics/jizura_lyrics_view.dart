@@ -428,16 +428,18 @@ final enter = _cl(t / inDur);
 
     // 尚未开唱
     if (maskX < 0) return null;
-    // 已经唱完整句，没必要再画亮层
-    if (maskX >= right) return null;
 
     final edge = (layout.size * 0.42).clamp(8.0, 16.0);
+
+    // 唱完整句后播放头是 infinity：应保持整句常亮，而不是把亮层撤掉。
+    // 参考实现同样在时间超出末字后返回 fullWidth（整行填满）。
+    final mx = maskX.isInfinite ? right + edge : maskX;
 
     // 归一化播放头与软边到 [0,1]
     double p(double x) => ((x - left) / totalW).clamp(0.0, 1.0);
 
-    final s0 = p(maskX - edge);
-    final s1 = p(maskX + edge);
+    final s0 = p(mx - edge);
+    final s1 = p(mx + edge);
 
     final transparent = bright.withValues(alpha: 0.0);
     final stops = <double>[0.0, s0, s1, 1.0];
@@ -961,14 +963,22 @@ case LyricTreat.gradient:
           );
       }
 
+// 扫字亮层用的 shader 画笔（描边类特效不参与遮罩）。
+      // 必须在字重生长分支**之前**算好：那个分支会 continue，
+      // 遮罩若只在其后应用，整句绝大部分时间都走不到（这正是之前
+      // 「完全看不到扫字」的原因——weightK 一过 0.02 就提前 continue）。
+      final sweepPaint =
+          (shader != null && !_isStrokeTreat(treat)) ? (Paint()..shader = shader) : null;
+
       // 字重生长：描边加粗（仅主层）
       if (isMain && weightK > 0.02 && treat != LyricTreat.outline && treat != LyricTreat.neon) {
         st = st.copyWith(
-          foreground: Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = weightK * g.fs * 0.05
-..strokeJoin = StrokeJoin.round
-            ..color = glyphColor,
+          foreground: sweepPaint ??
+              (Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = weightK * g.fs * 0.05
+                ..strokeJoin = StrokeJoin.round
+                ..color = glyphColor),
           color: null,
           shadows: st.shadows,
         );
@@ -980,8 +990,11 @@ case LyricTreat.gradient:
           fontSize: g.fs,
           fontWeight: FontWeight.w900,
           height: 1.0,
-          color: treat == LyricTreat.gradient ? null : glyphColor,
-          foreground: treat == LyricTreat.gradient ? st.foreground : null,
+          color: (treat == LyricTreat.gradient || sweepPaint != null)
+              ? null
+              : glyphColor,
+          foreground: sweepPaint ??
+              (treat == LyricTreat.gradient ? st.foreground : null),
           shadows: st.shadows,
         );
         tp.text = TextSpan(text: g.ch, style: st2);
@@ -994,12 +1007,8 @@ final p = Offset(g.x + dx, g.y + dy);
 
       // 扫字亮层：整句用横向渐变遮罩绘制。
       // 遮罩跨整行，所以软边能横跨字的接缝——这正是逐字上色的做不到的。
-      // 描边类特效（描边/霓虹）保持原样，遮罩只作用于填充。
-      if (shader != null && !_isStrokeTreat(treat)) {
-        st = st.copyWith(
-          foreground: Paint()..shader = shader,
-          color: null,
-        );
+      if (sweepPaint != null) {
+        st = st.copyWith(foreground: sweepPaint, color: null);
         tp.text = TextSpan(text: g.ch, style: st);
         tp.layout();
         tp.paint(canvas, p);
@@ -1015,10 +1024,8 @@ final p = Offset(g.x + dx, g.y + dy);
           fontSize: g.fs,
           fontWeight: FontWeight.w900,
           height: 1.0,
-          foreground: shader != null
-              ? (Paint()..shader = shader)
-              : null,
-          color: shader != null ? null : glyphColor,
+          foreground: sweepPaint,
+          color: sweepPaint != null ? null : glyphColor,
         );
         tp.text = TextSpan(text: g.ch, style: fillStyle);
         tp.layout();
