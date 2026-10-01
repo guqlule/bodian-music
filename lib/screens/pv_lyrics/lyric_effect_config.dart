@@ -191,7 +191,10 @@ class LyricEffectConfig {
 
   /// 随机模式：按种子生成一套特效组合。
   /// 同一首歌内稳定（换歌会换一套），避免每帧乱跳。
-  factory LyricEffectConfig.randomized(int seed) {
+  ///
+  /// 注意：**配色不参与随机**（用 [keepPalette]），
+  /// 否则每句都换整屏底色会疯狂闪屏。
+  factory LyricEffectConfig.randomized(int seed, {LyricPalette? keepPalette}) {
     double h(int salt) {
       final x = math.sin((seed + salt) * 127.1 + 311.7) * 43758.5453;
       return x - x.floor();
@@ -210,7 +213,8 @@ class LyricEffectConfig {
       hold: holds[(h(3) * holds.length).floor().clamp(0, holds.length - 1)],
       exit: exits[(h(4) * exits.length).floor().clamp(0, exits.length - 1)],
       treat: treats[(h(5) * treats.length).floor().clamp(0, treats.length - 1)],
-      palette: palettes[(h(6) * palettes.length).floor().clamp(0, palettes.length - 1)],
+      palette: keepPalette ??
+          palettes[(h(6) * palettes.length).floor().clamp(0, palettes.length - 1)],
       motion: 0.75 + h(7) * 0.6,
       sweep: h(8) > 0.25,
       random: true,
@@ -301,7 +305,7 @@ Future<void> showLyricEffectSheet(BuildContext context) async {
                       const SizedBox(height: 6),
                       _ToggleRow(
                         title: '随机特效',
-                        desc: '每首歌自动随机一套版式 / 动画 / 文本 / 配色',
+                        desc: '每一句歌词随机一套版式 / 动画 / 文本（配色不变）',
                         value: cfg.random,
                         accent: cfg.palette.accent,
                         onChanged: (v) => apply(cfg.copyWith(random: v)),

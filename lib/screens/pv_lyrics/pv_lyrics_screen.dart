@@ -37,8 +37,11 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
     });
   }
 
-  /// 随机模式：按歌曲 id 生成稳定的一套特效（同一首歌内不跳变）
-  void _syncRandom(String musicId) {
+  /// 随机模式：按「歌曲 id + 歌词行序号」生成稳定的一套特效。
+///
+/// 种子带行号，所以**每一句都会随机到不同效果**；
+/// 同时同一句在反复渲染时保持稳定（不会每帧乱跳）。
+void _syncRandom(String musicId, int lineIndex) {
     if (!_config.random) {
       if (_randomSeedKey.isNotEmpty) {
         _randomSeedKey = '';
@@ -46,10 +49,22 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
       }
       return;
     }
-    if (musicId == _randomSeedKey) return;
-    _randomSeedKey = musicId;
-    final seed = musicId.isEmpty ? 1 : musicId.hashCode;
-    setState(() => _active = LyricEffectConfig.randomized(seed));
+    final key = '$musicId#$lineIndex';
+    if (key == _randomSeedKey) return;
+    _randomSeedKey = key;
+    final seed = key.hashCode;
+    setState(() => _active = LyricEffectConfig.randomized(
+          seed,
+          keepPalette: _config.palette,
+        ));
+  }
+
+  int _currentLineIndexOf(Duration position) {
+    if (_lyrics.isEmpty) return 0;
+    for (int i = _lyrics.length - 1; i >= 0; i--) {
+      if (position >= _lyrics[i].time) return i;
+    }
+    return 0;
   }
 
   void _applyLyric(String lyricText) {
@@ -76,15 +91,16 @@ class _PvLyricsScreenState extends ConsumerState<PvLyricsScreen> {
     final position = ref.watch(positionProvider).valueOrNull ?? Duration.zero;
     final musicId = ref.watch(currentMusicProvider).valueOrNull?.id ?? '';
 
-    // 随机模式：切歌时换一套特效
-    _syncRandom(musicId);
+    // 随机模式：每一句歌词随机一套特效（种子含行号）
+    _syncRandom(musicId, _currentLineIndexOf(position));
 
     ref.listen(lyricProvider, (prev, next) {
       _applyLyric(next.valueOrNull?['lyric'] ?? '');
     });
 
-    final pal = _active.palette;
-
+    // 配色跟随用户手动选择，不参与逐句随机——
+    // 否则每句都换整屏底色会疯狂闪屏。
+    final pal = _config.palette;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
