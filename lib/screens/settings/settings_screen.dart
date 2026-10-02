@@ -9,6 +9,7 @@ import '../../services/sync/sync_service.dart';
 import '../../core/storage/storage_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../pv_lyrics/lyric_effect_config.dart';
+import '../../services/api/lyric_api_service.dart';
 
 const _qualityOptions = <(String, String, String)>[
   ('128k', '标准', '128kbps'),
@@ -143,11 +144,19 @@ class SettingsScreen extends ConsumerWidget {
                 subtitle: _carModeLabel(settings.carMode),
                 onTap: () => _showCarModeSheet(context, ref, settings.carMode),
               ),
+const _Divider(),
+              _buildTapTile(
+                icon: Icons.lyrics_rounded,
+                title: '歌词源',
+                subtitle: _lyricSourceLabel(settings.lyricSource),
+                onTap: () =>
+                    _showLyricSourceSheet(context, ref, settings.lyricSource),
+              ),
               const _Divider(),
               _buildTapTile(
                 icon: Icons.auto_awesome_rounded,
                 title: '歌词特效',
-                subtitle: '全屏歌词的版式 / 动画 / 配色',
+                subtitle: '全屏页版式 / 入场 / 转场 / 配色',
                 onTap: () => showLyricEffectSheet(context),
               ),
             ],
@@ -581,6 +590,63 @@ class SettingsScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+String _lyricSourceLabel(String id) {
+  for (final o in lyricSourceOptions) {
+    if (o.id == id) return '${o.label} · ${o.desc}';
+  }
+  return '自动';
+}
+
+/// 歌词源全局偏好。
+///
+/// 只决定「默认去哪取词」；单首歌想换源时用播放页歌词区的源标识。
+void _showLyricSourceSheet(BuildContext context, WidgetRef ref, String current) {
+  final music = ref.read(currentMusicProvider).valueOrNull;
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: AppColors.card,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final o in lyricSourceOptions)
+            ListTile(
+              leading: Icon(
+                current == o.id
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                color: current == o.id ? AppColors.primary : AppColors.textHint,
+              ),
+              title: Text(o.label, style: TextStyle(color: AppColors.textPrimary)),
+              subtitle: Text(
+                // 源不支持这首歌时直接说明，免得选了没反应
+                o.needsOwnSource && music != null && music.source != o.id
+                    ? '${o.desc}（当前歌曲非本源，无法使用）'
+                    : o.desc,
+                style: TextStyle(
+                  color: AppColors.textHint,
+                  fontSize: 11,
+                ),
+              ),
+              enabled: !(o.needsOwnSource &&
+                  music != null &&
+                  music.source != o.id),
+              onTap: () {
+                ref.read(settingsProvider.notifier).setLyricSource(o.id);
+                // 立即按新偏好重拉当前歌曲
+                ref.read(playerServiceProvider).refetchLyric();
+                Navigator.pop(ctx);
+              },
+            ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _Divider extends StatelessWidget {

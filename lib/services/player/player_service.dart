@@ -1070,7 +1070,15 @@ class PlayerService {
   }
 
   /// 异步获取歌词
-  Future<void> _fetchLyric(MusicInfo music) async {
+  /// 歌词源偏好的读取钩子。
+  ///
+  /// PlayerService 不依赖 providers（会造成循环依赖），所以由
+  /// `playerServiceProvider` 在创建时注入一个读 settingsProvider 的闭包。
+  /// 用读取函数而不是存一份值，避免设置改了但这里还是旧的。
+  String Function()? lyricSourcePrefGetter;
+
+  Future<void> _fetchLyric(MusicInfo music, {String? preferred}) async {
+    final pref = preferred ?? lyricSourcePrefGetter?.call() ?? 'auto';
     final lrId = _lyricRequestId;
     try {
 
@@ -1104,21 +1112,23 @@ class PlayerService {
         return;
       }
 
-      logDebug('[Lyric] 开始获取歌词: ${music.name} - ${music.singer} (source=${music.source}, songId=${music.songId})');
+      logDebug('[Lyric] 开始获取歌词: ${music.name} - ${music.singer} (source=${music.source}, songId=${music.songId}, 偏好=$pref)');
 
       // 内置API优先获取歌词
       Map<String, String?>? lyricData;
       try {
         lyricData = await _lyricApiService
-            .getLyric(music)
+            .getLyric(music, preferred: pref)
             .timeout(const Duration(seconds: 15));
 
         if (lyricData != null && lyricData['lyric'] != null && lyricData['lyric']!.isNotEmpty) {
           logDebug('[Lyric] 内置API歌词成功');
           if (_isStaleLyric(lrId)) return;
           _lyricController.add(lyricData);
-          // 只有行级歌词时，后台异步升级为逐字（不阻塞显示）
-          if (!LyricApiService.isWordLevel(lyricData['lyric'])) {
+          // 只有行级歌词时，后台异步升级为逐字（不阻塞显示）。
+          // 但用户手动指定了源就不能再自动升级 —— 否则刚选的源会被
+          // 酷狗 KRC 覆盖掉，等于换源没生效。
+          if (pref == 'auto' && !LyricApiService.isWordLevel(lyricData['lyric'])) {
             unawaited(_upgradeToWordLyric(music, lrId));
           }
           return;
@@ -1127,8 +1137,9 @@ class PlayerService {
         logDebug('[Lyric] 内置API歌词失败: $e');
       }
 
-      // 内置API无歌词 → 回退用户源
-      if (_urlService.isUserApiActive) {
+      // 内置API无歌词 → 回退用户源。
+      // 指定了 'user' 时这才是唯一路径。
+      if (_urlService.isUserApiActive && pref != 'user') {
         try {
           logDebug('[Lyric] 内置API无歌词，尝试用户源');
           lyricData = await _urlService.getLyric(music: music);
@@ -1177,6 +1188,49 @@ class PlayerService {
     if (music == null) return;
     _lyricRequestId++;
     _fetchLyricParallel(music);
+  }
+
+  /// 单曲换歌词源：只用 [source] 重拉当前这首歌的歌词。
+  ///
+  /// 与 [refetchLyric] 的区别是它**跳过自动逐字升级**——
+  /// 否则刚选中的源会被后台的酷狗 KRC 覆盖，等于换源没生效。
+  ///
+  /// 返回实际命中的源 id；失败返回 null（UI 据此提示）。
+  /// [source] 传 'user' 时走用户脚本。
+  Future<String?> switchLyricSource(String source) async {
+    final music = _currentMusicController.value;
+    if (music == null) return null;
+    _lyricRequestId++;
+    final lrId = _lyricRequestId;
+
+    try {
+      if (source == 'user') {
+        if (!_urlService.isUserApiActive) {
+          logDebug('[Lyric] 用户源未启用，无法切到用户脚本');
+          return null;
+        }
+        final r = await _urlService.getLyric(music: music);
+        if (_isStaleLyric(lrId)) return null;
+        if (r == null || (r['lyric'] ?? '').isEmpty) return null;
+        _lyricController.add({...r, LyricApiService.kSourceKey: 'user'});
+        return 'user';
+      }
+
+      final r = await _lyricApiService
+          .getLyricFrom(source, music)
+          .timeout(const Duration(seconds: 15));
+      if (_isStaleLyric(lrId)) return null;
+      if (r == null || (r['lyric'] ?? '').isEmpty) {
+        logDebug('[Lyric] 切源 $source 失败');
+        return null;
+      }
+      logDebug('[Lyric] 已切到 $source: ${music.name}');
+      _lyricController.add(r);
+      return r[LyricApiService.kSourceKey] ?? source;
+    } catch (e) {
+      logDebug('[Lyric] 切源 $source 异常: $e');
+      return null;
+    }
   }
 
   /// 并行获取歌词（不阻塞播放，结果异步写入控制器）

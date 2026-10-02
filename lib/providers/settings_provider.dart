@@ -17,6 +17,11 @@ class AppSettings {
   /// 蓝牙模式 title 写歌词行（AVRCP 车机只认 title）。
   final String carMode;
 
+  /// 歌词源偏好：auto=自动（按歌曲来源取，失败再跨源兜底）
+  /// kg=酷狗(KRC 逐字) / wy=网易云 / tx=QQ / kw=酷我 / user=用户脚本
+  /// 注意 tx/kw 只能用本源的 songId，跨源歌曲取不到。
+  final String lyricSource;
+
   AppSettings({
     this.isDarkMode = false,
     this.fontSize = 14.0,
@@ -26,7 +31,8 @@ class AppSettings {
     this.syncHost = '',
     this.syncCode = '',
     this.enableBluetoothLyric = true,
-    this.carMode = 'auto',
+this.carMode = 'auto',
+    this.lyricSource = 'auto',
   });
 
   AppSettings copyWith({
@@ -38,7 +44,8 @@ class AppSettings {
     String? syncHost,
     String? syncCode,
     bool? enableBluetoothLyric,
-    String? carMode,
+String? carMode,
+    String? lyricSource,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -49,7 +56,8 @@ class AppSettings {
       syncHost: syncHost ?? this.syncHost,
       syncCode: syncCode ?? this.syncCode,
       enableBluetoothLyric: enableBluetoothLyric ?? this.enableBluetoothLyric,
-      carMode: carMode ?? this.carMode,
+carMode: carMode ?? this.carMode,
+      lyricSource: lyricSource ?? this.lyricSource,
     );
   }
 
@@ -63,7 +71,8 @@ class AppSettings {
       'syncHost': syncHost,
       'syncCode': syncCode,
       'enableBluetoothLyric': enableBluetoothLyric,
-      'carMode': carMode,
+'carMode': carMode,
+      'lyricSource': lyricSource,
     };
   }
 
@@ -77,7 +86,8 @@ class AppSettings {
       syncHost: json['syncHost'] ?? '',
       syncCode: json['syncCode'] ?? '',
       enableBluetoothLyric: json['enableBluetoothLyric'] ?? true,
-      carMode: json['carMode'] ?? 'auto',
+carMode: json['carMode'] ?? 'auto',
+      lyricSource: json['lyricSource'] ?? 'auto',
     );
   }
 }
@@ -142,8 +152,13 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     _saveSettings();
   }
 
-  void setCarMode(String mode) {
+void setCarMode(String mode) {
     state = state.copyWith(carMode: mode);
+    _saveSettings();
+  }
+
+  void setLyricSource(String source) {
+    state = state.copyWith(lyricSource: source);
     _saveSettings();
   }
 }

@@ -7,10 +7,15 @@ import '../models/playlist_model.dart';
 import '../services/player/player_service.dart';
 import '../services/sync/sync_service.dart';
 import '../core/utils/logger.dart';
+import 'settings_provider.dart';
 
 // Player Service Provider
 final playerServiceProvider = Provider<PlayerService>((ref) {
-  return PlayerService();
+  final svc = PlayerService();
+  // 歌词源偏好在这里注入：PlayerService 不依赖 providers（会循环依赖），
+  // 用读取函数而非存值，设置改了立刻生效。
+  svc.lyricSourcePrefGetter = () => ref.read(settingsProvider).lyricSource;
+  return svc;
 });
 
 /// 用 PlayerService.streamProvider 简化样板

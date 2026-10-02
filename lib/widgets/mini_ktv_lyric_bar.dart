@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/app_providers.dart';
 import '../core/theme/app_theme.dart';
+import '../services/api/lyric_api_service.dart';
 import '../services/lyric/lyric_parser.dart';
 import '../screens/pv_lyrics/pv_lyrics_screen.dart';
 import 'large_ktv_overlay.dart';
@@ -23,6 +24,10 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
   List<LyricLine> _lyrics = [];
   String _lyricKey = '';
   int _lastIndex = -1;
+
+  /// 当前歌词实际来自哪个源（由 PlayerService 在结果里标注）
+  String _lyricSource = '';
+  bool _switching = false;
 
   Duration _basePos = Duration.zero;
   DateTime _basePosTime = DateTime.now();
@@ -62,9 +67,11 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
 
   void _tryParseLyric(Map<String, String?>? lyricMap) {
     final lyricText = lyricMap?['lyric'] ?? '';
+    final src = lyricMap?[LyricApiService.kSourceKey] ?? '';
     final key = '${ref.read(currentMusicProvider).valueOrNull?.id ?? ''}_$lyricText';
     if (key == _lyricKey) return;
     _lyricKey = key;
+    _lyricSource = src;
     _lyrics = LyricParser.parse(lyricText);
     _lastIndex = -1;
     if (mounted) setState(() {});
@@ -74,6 +81,92 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
         _tickerListenable.notify();
       });
     }
+  }
+
+  String get _sourceLabel {
+    for (final o in lyricSourceOptions) {
+      if (o.id == _lyricSource) return o.label;
+    }
+    return '歌词';
+  }
+
+  /// 单曲换源：只试这一个源，不走自动兜底，也不后台升级逐字。
+  Future<void> _switchSource(String source) async {
+    if (_switching) return;
+    setState(() => _switching = true);
+    final ok = await ref.read(playerServiceProvider).switchLyricSource(source);
+    if (!mounted) return;
+    setState(() => _switching = false);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(SnackBar(
+      content: Text(ok != null
+          ? '已切换歌词源'
+          : '该源取不到歌词'),
+      duration: const Duration(milliseconds: 1400),
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  void _showSourceSheet() {
+    final music = ref.read(currentMusicProvider).valueOrNull;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+              child: Row(
+                children: [
+                  Text('歌词源',
+                      style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(width: 8),
+                  Text('当前：$_sourceLabel',
+                      style: TextStyle(
+                          color: AppColors.textHint, fontSize: 12)),
+                ],
+              ),
+            ),
+            for (final o in lyricSourceOptions)
+              Builder(builder: (_) {
+                final unusable = o.needsOwnSource &&
+                    music != null &&
+                    music.source != o.id;
+                final isCurrent = o.id == _lyricSource;
+                return ListTile(
+                  leading: Icon(
+                    isCurrent
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color:
+                        isCurrent ? AppColors.primary : AppColors.textHint,
+                  ),
+                  title: Text(o.label,
+                      style: TextStyle(color: AppColors.textPrimary)),
+                  subtitle: Text(
+                    unusable ? '${o.desc}（当前歌曲非本源）' : o.desc,
+                    style:
+                        TextStyle(color: AppColors.textHint, fontSize: 11),
+                  ),
+                  enabled: !unusable && !isCurrent,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _switchSource(o.id);
+                  },
+                );
+              }),
+          ],
+        ),
+      ),
+    );
   }
 
   int _findIndex(Duration pos) {
@@ -149,39 +242,80 @@ class _MiniKtvLyricBarState extends ConsumerState<MiniKtvLyricBar> {
       child: Container(
         height: _visibleLines * _lineHeight,
         margin: const EdgeInsets.fromLTRB(24, 4, 24, 8),
-        child: AnimatedBuilder(
-          animation: _tickerListenable,
-          // 关键：estPos/idx/progress 必须放在 builder 内，
-          // 否则 ticker 触发的重建会复用旧的 idx 和 progress，歌词就不会动。
-          // 之前 build() 只在 setState 时调用，AnimatedBuilder.builder
-          // 内部用的闭包变量是 build() 时的快照。
-          builder: (context, _) {
-            final estPos = _playing
-                ? _basePos + DateTime.now().difference(_basePosTime)
-                : _basePos;
-            final idx = _findIndex(estPos);
-            if (idx < 0) return const SizedBox.shrink();
-            final progress = _progress(idx, estPos);
+        child: Stack(
+          children: [
+            // 歌词本体铺满，外层 GestureDetector 负责进全屏
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: _tickerListenable,
+                // 关键：estPos/idx/progress 必须放在 builder 内，
+                // 否则 ticker 触发的重建会复用旧的 idx 和 progress，歌词就不会动。
+                // 之前 build() 只在 setState 时调用，AnimatedBuilder.builder
+                // 内部用的闭包变量是 build() 时的快照。
+                builder: (context, _) {
+                  final estPos = _playing
+                      ? _basePos + DateTime.now().difference(_basePosTime)
+                      : _basePos;
+                  final idx = _findIndex(estPos);
+                  if (idx < 0) return const SizedBox.shrink();
+                  final progress = _progress(idx, estPos);
 
-            return Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(_visibleLines, (slot) {
-                final lineIdx = idx - (_visibleLines ~/ 2) + slot;
-                if (lineIdx < 0 || lineIdx >= _lyrics.length) {
-                  return const SizedBox(height: _lineHeight);
-                }
-                final text = _lyrics[lineIdx].text;
-                if (text.isEmpty) return const SizedBox(height: _lineHeight);
-                if (lineIdx != idx) {
-                  return _SurroundingLine(
-                    text: text,
-                    distance: (lineIdx - idx).abs(),
+                  return Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(_visibleLines, (slot) {
+                      final lineIdx = idx - (_visibleLines ~/ 2) + slot;
+                      if (lineIdx < 0 || lineIdx >= _lyrics.length) {
+                        return const SizedBox(height: _lineHeight);
+                      }
+                      final text = _lyrics[lineIdx].text;
+                      if (text.isEmpty) return const SizedBox(height: _lineHeight);
+                      if (lineIdx != idx) {
+                        return _SurroundingLine(
+                          text: text,
+                          distance: (lineIdx - idx).abs(),
+                        );
+                      }
+                      return _CurrentLine(text: text, progress: progress);
+                    }),
                   );
-                }
-                return _CurrentLine(text: text, progress: progress);
-              }),
-            );
-          },
+                },
+              ),
+            ),
+            // 源标识：自己吃掉手势，避免冒泡到外层触发进全屏
+            Positioned(
+              top: 0,
+              right: 0,
+              child: GestureDetector(
+                onTap: _switching ? null : _showSourceSheet,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.lyrics_rounded,
+                          size: 11,
+                          color: AppColors.primary.withValues(alpha: 0.9)),
+                      const SizedBox(width: 3),
+                      Text(
+                        _switching ? '切换中' : _sourceLabel,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.primary
+                              .withValues(alpha: 0.9),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

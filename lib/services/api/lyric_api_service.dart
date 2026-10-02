@@ -22,6 +22,32 @@ Future<Map<String, dynamic>?> _httpGetJson(Uri url, {String tag = '', Map<String
   }
 }
 
+/// 可选的歌词源。
+///
+/// 各源能力不对称，这是设计换源功能时必须先认清的前提：
+///   kg  按歌名+歌手检索可命中任意歌曲，且是唯一稳定的逐字源（KRC）
+///   wy  按歌名+歌手检索可命中任意歌曲，但只有行级 LRC
+///   tx  **只能用 QQ 自己的 songId**（QQ 不提供歌词关键词检索）
+///   kw  **只能用酷我自己的 songId**
+///   user 由用户脚本决定
+class LyricSourceOption {
+  final String id;
+  final String label;
+  final String desc;
+  final bool needsOwnSource;
+  const LyricSourceOption(this.id, this.label, this.desc,
+      {this.needsOwnSource = false});
+}
+
+const lyricSourceOptions = <LyricSourceOption>[
+  LyricSourceOption('auto', '自动', '按歌曲来源取，完全没有歌词时再跨源兜底'),
+  LyricSourceOption('kg', '酷狗', 'KRC 逐字，对应歌曲才有逐字', needsOwnSource: false),
+  LyricSourceOption('wy', '网易云', '行级歌词，可用于任意歌曲'),
+  LyricSourceOption('tx', 'QQ 音乐', '仅 QQ 本源歌曲可用', needsOwnSource: true),
+  LyricSourceOption('kw', '酷我', '仅酷我本源歌曲可用', needsOwnSource: true),
+  LyricSourceOption('user', '用户脚本', '由你导入的音源脚本决定'),
+];
+
 /// 内置歌词获取服务
 class LyricApiService {
   static final LyricApiService _instance = LyricApiService._internal();
@@ -45,35 +71,96 @@ class LyricApiService {
   /// 公开版：判断歌词是否含逐字时间戳
   static bool isWordLevel(String? lyric) => _hasWordTiming(lyric);
 
+  /// 源标识的键名。结果 map 里会带上，供 UI 显示「当前歌词来自哪个源」。
+  static const String kSourceKey = '_source';
+
+  /// 给结果补上来源标识
+  static Map<String, String?>? _tag(Map<String, String?>? r, String src) {
+    if (r == null || (r['lyric'] ?? '').isEmpty) return null;
+    return {...r, kSourceKey: src};
+  }
+
+  /// 从**指定源**取歌词，只试这一个源。
+  ///
+  /// 用于「单曲换源」：用户明确选了某个源，就不该再被自动兜底覆盖。
+  /// 返回 null 表示该源取不到（网络失败、或该源不支持这首歌）。
+  Future<Map<String, String?>?> getLyricFrom(String source, MusicInfo music) async {
+    logDebug('[LyricApi] 指定源取词: source=$source, song=${music.source}');
+    switch (source) {
+      case 'kg':
+        // 酷狗本源用 songId（最准），其他源用歌名+歌手检索
+        if (music.source == 'kg') return _tag(await _getKgLyric(music), 'kg');
+        return _tag(await _searchKgLyricByKeyword(music), 'kg');
+      case 'wy':
+        if (music.source == 'wy') return _tag(await _getWyLyric(music), 'wy');
+        return _tag(await _searchWyLyricByKeyword(music), 'wy');
+      case 'tx':
+        // QQ 不提供歌词关键词检索，只能用本源 songId
+        if (music.source != 'tx') {
+          logDebug('[LyricApi] QQ 歌词仅支持 QQ 本源歌曲，当前=${music.source}');
+          return null;
+        }
+        return _tag(await _getTxLyric(music), 'tx');
+      case 'kw':
+        if (music.source != 'kw') {
+          logDebug('[LyricApi] 酷我歌词仅支持酷我本源歌曲，当前=${music.source}');
+          return null;
+        }
+        return _tag(await _getKwLyric(music), 'kw');
+      default:
+        return null;
+    }
+  }
+
   /// 获取歌词 - 根据来源选择对应API，完全没有歌词时才跨源兜底
+  ///
+  /// [preferred] 非 auto 时只走该源（不再兜底），用于设置里的全局偏好。
   ///
   /// 注意：这里**不会**为了升级逐字而额外发请求——
   /// 那是 [upgradeToWordLyric] 的职责，由播放器在后台异步调用，
   /// 避免为了等酷狗 KRC 而让本来秒出的行级歌词卡住 1~3 秒。
-  Future<Map<String, String?>?> getLyric(MusicInfo music) async {
+  Future<Map<String, String?>?> getLyric(MusicInfo music,
+      {String preferred = 'auto'}) async {
     logDebug('[LyricApi] 获取歌词: source=${music.source}, id=${music.songId}');
-    
+
+    // 全局指定了源：只试这一个源，失败就返回空，不做跨源兜底
+    if (preferred != 'auto') {
+      final r = await getLyricFrom(preferred, music);
+      if (r != null) return r;
+      logDebug('[LyricApi] 指定源 $preferred 取不到 lyrics，放弃兜底');
+      return null;
+    }
+
     Map<String, String?>? result;
+    String resultSrc = '';
     switch (music.source) {
       case 'kw':
         result = await _getKwLyric(music);
+        resultSrc = 'kw';
         break;
       case 'wy':
         result = await _getWyLyric(music);
+        resultSrc = 'wy';
         break;
       case 'tx':
         result = await _getTxLyric(music);
+        resultSrc = 'tx';
         break;
       case 'kg':
         result = await _getKgLyric(music);
+        resultSrc = 'kg';
         break;
       default:
         result = await _getKwLyric(music);
-        if (result == null) result = await _getWyLyric(music);
+        resultSrc = 'kw';
+        if (result == null) {
+          result = await _getWyLyric(music);
+          resultSrc = 'wy';
+        }
     }
 
     if (result != null && result['lyric'] != null && result['lyric']!.isNotEmpty) {
-      return result;
+      return _tag(result, resultSrc);
     }
 
     // 完全没有歌词 → 网易云关键词兜底
@@ -82,7 +169,7 @@ class LyricApiService {
       final fallback = await _searchWyLyricByKeyword(music);
       if (fallback != null && fallback['lyric'] != null && fallback['lyric']!.isNotEmpty) {
         logDebug('[LyricApi] 网易云跨源兜底成功');
-        return fallback;
+        return _tag(fallback, 'wy');
       }
     } catch (e) {
       logDebug('[LyricApi] 网易云跨源兜底失败: $e');
@@ -93,13 +180,13 @@ class LyricApiService {
       final kg = await _searchKgLyricByKeyword(music);
       if (kg != null && kg['lyric'] != null && kg['lyric']!.isNotEmpty) {
         logDebug('[LyricApi] 酷狗 KRC 跨源兜底成功');
-        return kg;
+        return _tag(kg, 'kg');
       }
     } catch (e) {
       logDebug('[LyricApi] 酷狗 KRC 兜底失败: $e');
     }
 
-    return result;
+    return null;
   }
 
   /// 把行级歌词升级为逐字（酷狗 KRC）。
@@ -113,7 +200,7 @@ class LyricApiService {
       final kg = await _searchKgLyricByKeyword(music);
       if (kg != null && _hasWordTiming(kg['lyric'])) {
         logDebug('[LyricApi] 酷狗 KRC 升级逐字成功: ${music.name}');
-        return kg;
+        return _tag(kg, 'kg');
       }
     } catch (e) {
       logDebug('[LyricApi] 酷狗 KRC 升级逐字失败: $e');
